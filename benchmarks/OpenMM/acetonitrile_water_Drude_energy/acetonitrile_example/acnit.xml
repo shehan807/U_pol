@@ -1,0 +1,48 @@
+<ForceField>
+ <AtomTypes>
+  <!--           set masses to zero so that atoms stay fixed when calling energy/force      -->
+  <Type name="acnt-CT" class="CT" element="C" mass="0"/>
+  <Type name="acnt-DCT" class="Sh" mass="0"/>
+  <Type name="acnt-CZ" class="CZ" element="C" mass="0"/>
+  <Type name="acnt-DCZ" class="Sh" mass="0"/>
+  <Type name="acnt-NZ" class="NZ" element="N" mass="0"/>
+  <Type name="acnt-DNZ" class="Sh" mass="0"/>
+  <Type name="acnt-HZ" class="HZ" element="H" mass="0"/>
+  <Type name="acnt-HZ1" class="HZ" element="H" mass="0"/>
+  <Type name="acnt-HZ2" class="HZ" element="H" mass="0"/>
+ </AtomTypes>
+ <Residues>
+  <Residue name="acnt">
+   <Atom name="CT" type="acnt-CT"/>
+   <Atom name="CZ" type="acnt-CZ"/>
+   <Atom name="NZ" type="acnt-NZ"/>
+   <Atom name="HZ" type="acnt-HZ"/>
+   <Atom name="HZ1" type="acnt-HZ1"/>
+   <Atom name="HZ2" type="acnt-HZ2"/>
+   <Atom name="DCT" type="acnt-DCT"/>
+   <Atom name="DCZ" type="acnt-DCZ"/>
+   <Atom name="DNZ" type="acnt-DNZ"/>
+   <Bond from="0" to="1"/>
+   <Bond from="1" to="2"/>
+   <Bond from="0" to="3"/>
+   <Bond from="0" to="4"/>
+   <Bond from="0" to="5"/>
+  </Residue>
+ </Residues>
+ <NonbondedForce coulomb14scale="0" lj14scale="0">
+  <Atom type="acnt-CT" charge="1.263" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-DCT" charge="-1.252" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-CZ" charge="1.004" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-DCZ" charge="-0.716" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-NZ" charge="0.554" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-DNZ" charge="-1.015" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-HZ" charge="0.054" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-HZ1" charge="0.054" sigma="1.00000" epsilon="0.00000"/>
+  <Atom type="acnt-HZ2" charge="0.054" sigma="1.00000" epsilon="0.00000"/>
+ </NonbondedForce>
+ <DrudeForce>
+  <Particle type1="acnt-DNZ" type2="acnt-NZ" charge="-1.015" polarizability="0.001527" thole="1"/>
+  <Particle type1="acnt-DCT" type2="acnt-CT" charge="-1.252" polarizability="0.002324" thole="1"/>
+  <Particle type1="acnt-DCZ" type2="acnt-CZ" charge="-0.716" polarizability="0.000760" thole="1"/>
+ </DrudeForce>
+</ForceField>
