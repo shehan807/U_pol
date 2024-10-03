@@ -50,11 +50,7 @@ One way to represent polarization in MD is by representing dipoles of finite len
 
 There is a positive "core" charge located at the nucleus and a negative "shell" charge with fixed magnitude, $\pm q_{i}$, for some neutral atom site $i$ respectively. The dipole moment then determined by 
 
-$$
-
-\mathbf{\mu}_ i= -q_i \mathbf{d}_ i
-
-$$ 
+$$\mathbf{\mu}_ i= -q_i \mathbf{d}_ i$$ 
 
 
 <!-- GETTING STARTED -->
