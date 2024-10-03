@@ -36,7 +36,7 @@ Polarization is defined by the redistribution of a particle's electronic density
 
 $U_{LJ}(r) = 4\epsilon_{ij}\left[\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{12}-\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{6}\right]$
 
-includes a long range attractive $r^{-6}$ dependence due to London dispersion. Moreover, partial atomic charges, $q_i$ also incorporate polarization in an \textit{implicit} way, where charge values are ``enhanced'' say in the case of condensed phase systems. However, effective treatment of polarization neglect the fundamental dependence charge distribution has on a system's state and the dynamic response to fluctuations in the electric field upon sub-picosecond molecular motion (Rick and Stuart, 2002). 
+includes a long range attractive $r^{-6}$ dependence due to London dispersion. Moreover, partial atomic charges, $q_i$ also incorporate polarization in an *implicit* way, where charge values are ``enhanced'' say in the case of condensed phase systems. However, effective treatment of polarization neglect the fundamental dependence charge distribution has on a system's state and the dynamic response to fluctuations in the electric field upon sub-picosecond molecular motion (Rick and Stuart, 2002). 
 
 ### Shell Models 
 
