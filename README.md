@@ -10,7 +10,7 @@
 \require{boldsymbol}
 
 
-# Polarization Energy, $U_{pol}(\mathbf{r}_{i},d_{i})$, Calculator
+# Polarization Energy, $U_{pol}(<r >}_{i},d_{i})$, Calculator
 
 <!-- TABLE OF CONTENTS -->
 <details>
