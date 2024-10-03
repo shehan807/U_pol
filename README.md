@@ -7,7 +7,7 @@
 *** https://www.markdownguide.org/basic-syntax/#reference-style-links
 -->
 
-# $U_{pol}$ Calculator
+# Polarization Energy, $U_{pol}(\{\mathbf{r}_{i}\},\{\mathbf{d}_{i}\} $, Calculator
 
 <!-- TABLE OF CONTENTS -->
 <details>
