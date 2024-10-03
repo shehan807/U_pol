@@ -7,15 +7,14 @@
 *** https://www.markdownguide.org/basic-syntax/#reference-style-links
 -->
 
+# $U_{pol}$ Calculator
+
 <!-- TABLE OF CONTENTS -->
 <details>
   <summary>Table of Contents</summary>
   <ol>
     <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-      </ul>
+      <a href="#theory">Theory</a>
     </li>
     <li>
       <a href="#getting-started">Getting Started</a>
@@ -36,7 +35,7 @@
 
 
 <!-- ABOUT THE PROJECT -->
-## About The Project
+## Theory
 
 [![Product Name Screen Shot][product-screenshot]](https://example.com)
 
