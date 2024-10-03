@@ -40,7 +40,7 @@ includes a long range attractive $r^{-6}$ dependence due to London dispersion. M
 
 ### Shell Models 
 
-One way to represent polarization in MD is by representing dipoles of finite length as a pair of point charges attached by a harmonic spring, e.g. ``shell models'' or otherwise referred to as ``Drude oscillator models''. For the sake of terminology, there is a subtle distinction between \textit{shell} models, in which dipoles are treated adiabatically, and \textit{Drude} models, where dipole oscillations are thermal, thereby giving rise to dispersion interaction. 
+One way to represent polarization in MD is by representing dipoles of finite length as a pair of point charges attached by a harmonic spring, e.g. `shell models` or otherwise referred to as `Drude oscillator models`. For the sake of terminology, there is a subtle distinction between *shell* models, in which dipoles are treated adiabatically, and *Drude* models, where dipole oscillations are thermal, thereby giving rise to dispersion interaction. 
 
 ![alt text](http://localscf.com/localscf.com/images/drude.jpg) 
 
