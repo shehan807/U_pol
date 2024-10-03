@@ -29,22 +29,21 @@
 </details>
 
 
-
 <!-- ABOUT THE PROJECT -->
 ## Theory
 
-There are many great README templates available on GitHub; however, I didn't find one that really suited my needs so I created this enhanced one. I want to create a README template so amazing that it'll be the last one you ever need -- I think this is it.
+Polarization is defined by the redistribution of a particle's electronic density due to local electric fields. In the simplest case, the polarizability of two particles with polarizabilities $\alpha$ is proportional to $-\alpha^2/r^6$ (in an average sense). This is captured in many nonpolarizable molecular dynamics (MD) codes through the Lennard-Jones potential, where
 
-Here's why:
-* Your time should be focused on creating something amazing. A project that solves a problem and helps others
-* You shouldn't be doing the same tasks over and over like creating a README from scratch
-* You should implement DRY principles to the rest of your life :smile:
+$U_{LJ}(r) = 4\epsilon_{ij}\left[\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{12}-\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{6}\right]$
 
-Of course, no one template will serve all projects since your needs may be different. So I'll be adding more in the near future. You may also suggest changes by forking this repo and creating a pull request or opening an issue. Thanks to all the people have contributed to expanding this template!
+includes a long range attractive $r^{-6}$ dependence due to London dispersion. Moreover, partial atomic charges, $q_i$ also incorporate polarization in an \textit{implicit} way, where charge values are ``enhanced'' say in the case of condensed phase systems. However, effective treatment of polarization neglect the fundamental dependence charge distribution has on a system's state and the dynamic response to fluctuations in the electric field upon sub-picosecond molecular motion (Rick and Stuart, 2002). 
 
-Use the `BLANK_README.md` to get started.
+### Shell Models 
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+One way to represent polarization in MD is by representing dipoles of finite length as a pair of point charges attached by a harmonic spring, e.g. ``shell models'' or otherwise referred to as ``Drude oscillator models''. For the sake of terminology, there is a subtle distinction between \textit{shell} models, in which dipoles are treated adiabatically, and \textit{Drude} models, where dipole oscillations are thermal, thereby giving rise to dispersion interaction. 
+
+![alt text](http://localscf.com/localscf.com/images/drude.jpg) 
+
 
 <!-- GETTING STARTED -->
 ## Getting Started
