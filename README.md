@@ -7,7 +7,8 @@
 *** https://www.markdownguide.org/basic-syntax/#reference-style-links
 -->
 
-\require{boldsymbol}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+
 
 
 # Polarization Energy, $U_{pol}(<r >}_{i},d_{i})$, Calculator
