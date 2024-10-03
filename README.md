@@ -38,7 +38,7 @@
 
 Polarization is defined by the redistribution of a particle's electronic density due to local electric fields. In the simplest case, the polarizability of two particles with polarizabilities $\alpha$ is proportional to $-\alpha^2/r^6$ (in an average sense). This is captured in many nonpolarizable molecular dynamics (MD) codes through the Lennard-Jones potential, where
 
-$U_{LJ}(r) = 4\epsilon_{ij}\left[\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{12}-\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{6}\right]$
+$$U_{LJ}(r) = 4\epsilon_{ij}\left[\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{12}-\left(\frac{\sigma_{ij}}{r_{ij}}\right)^{6}\right]$$
 
 includes a long range attractive $r^{-6}$ dependence due to London dispersion. Moreover, partial atomic charges, $q_i$ also incorporate polarization in an *implicit* way, where charge values are ``enhanced'' say in the case of condensed phase systems. However, effective treatment of polarization neglect the fundamental dependence charge distribution has on a system's state and the dynamic response to fluctuations in the electric field upon sub-picosecond molecular motion (Rick and Stuart, 2002). 
 
@@ -52,6 +52,7 @@ There is a positive "core" charge located at the nucleus and a negative "shell" 
 
 $$\mathbf{\mu}_ i= -q_i \mathbf{d}_ i$$ 
 
+**The goal of this program is to determine the potential energy of the induced dipoles, $U_{ind}$, provided the initial positions of the atoms and Drude particles are given (i.e., input ``.cif``, ``.pdb``, etc.).**  
 
 <!-- GETTING STARTED -->
 ## Getting Started
