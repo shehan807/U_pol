@@ -3,6 +3,54 @@ from openmm.app import *
 from openmm import *
 from simtk.unit import *
 from sys import stdout
+def get_raw_inputs(simmd, system, nonbonded_force, drude_force):
+    positions = simmd.context.getState(getPositions=True).getPositions()
+    r = []
+    q = []
+    Drude = []
+    
+    # Loop over regular particles
+    for i in range(system.getNumParticles()):
+        # print(f"ATOM {i} INFO:\n")
+        # Get charge, sigma, epsilon for each atom
+        charge, sigma, epsilon = nonbonded_force.getParticleParameters(i)
+        charge = charge.value_in_unit(elementary_charge)
+
+        # Get position of the atom
+        pos = list(positions[i])
+        pos = [p.value_in_unit(nanometer) for p in pos]
+
+        # Check if this atom has an associated Drude particle
+        has_drude = False
+        for j in range(drude_force.getNumParticles()):
+            # Retrieve Drude particle parameters
+            params = drude_force.getParticleParameters(j)
+            parent_atom_index = params[0]
+            polarizability = params[6]
+            print(params)
+            if parent_atom_index == i:  # If Drude particle is associated with this atom
+                has_drude = True
+                # print(f" Drude Parameters for Atom {i}: Charge = {charge}, Polarizability = {polarizability}")
+                Drude.append(True)
+        
+        if not has_drude:
+            # print(f"No Drude parameters for Atom {i}")
+            Drude.append(False)
+        
+        q.append(charge)
+        r.append(pos)
+        # Output relevant information
+        # print(f"Atom {i}: Charge = {charge}, Sigma = {sigma}, Epsilon = {epsilon}, Position = {pos}, Drude = {Drude[i]}")
+    
+    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
+    print("\nq")
+    print(q)
+    print("\nr")
+    print(r)
+    print("\nDrude?")
+    print(Drude)
+    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
+
 
 #input/output files
 pdb_file = "water.pdb" 
@@ -40,7 +88,26 @@ simmd = Simulation(modeller.topology, system, integrator, platform)
 simmd.context.setPositions(modeller.positions)
 
 # integrate one step to optimize Drude positions.  Note that atoms won't move if masses are set to zero
+# Get the NonbondedForce which contains the charges and other parameters
+# Get the NonbondedForce which contains the charges and other parameters
+nonbonded_force = None
+drude_force = None
+
+# Loop through system forces to find NonbondedForce and DrudeForce
+for i in range(system.getNumForces()):
+    force = system.getForce(i)
+    if isinstance(force, NonbondedForce):
+        nonbonded_force = force
+    elif isinstance(force, DrudeForce):
+        drude_force = force
+print("")
+print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
+print(" Printing Positions (before Drude Optimization)                        \n")
+get_raw_inputs(simmd, system, nonbonded_force, drude_force)
 simmd.step(1)
+print(" Printing Positions (after Drude Optimization)                         \n")
+get_raw_inputs(simmd, system, nonbonded_force, drude_force)
+print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
 
 # now call/print energy of system
 state = simmd.context.getState(getEnergy=True,getForces=True,getVelocities=True,getPositions=True)
