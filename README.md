@@ -8,7 +8,7 @@
 -->
 
 
-# Polarization Energy, $U_{pol}(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}\})$, Calculator
+# Polarization Energy, $U_{pol}(\{ \mathbf{r}_ {i} \} ,\{ \mathbf{d}_ {i} \} )$, Calculator
 
 <!-- TABLE OF CONTENTS -->
 <details>
