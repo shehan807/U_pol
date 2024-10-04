@@ -53,7 +53,7 @@ One way to represent polarization in MD is by representing dipoles of finite len
 
 There is a positive "core" charge located at the nucleus and a negative "shell" charge with fixed magnitude, $\pm q_{i}$, for some neutral atom site $i$ respectively. Charged species can be accomadated by inluding a permanent charge $z_{i}$ with the core (nuclear) charge. The dipole moment then determined by 
 
-$$\mathbf{\mu}_ i= -q_i \mathbf{d}_ i$$ 
+$$ \mathbf{\mu}_ i= -q_i \mathbf{d}_ i$$ 
 
 **The goal of this program is to determine the potential energy of the induced dipoles, $U_{ind}$, provided the initial positions of the atoms and Drude particles are given (i.e., input ``.cif``, ``.pdb``, etc.).** $U_{ind}$ is broken up into three components, (1) the polarization energy, $U_{pol}$, (2) the induced-dipole/induced-dipole interaction energy, $U_{\mu\mu}$, and (3)the interaction with any static field, $U_{stat}$: 
 
@@ -67,11 +67,11 @@ where the spring constants $k_i$ can be found (for an isotropic shell model) thr
 
 The electrostatic interaction between independent polarizable atoms is written as the sum of the charge-charge interactions between all four charge sites):
 
-$$U_{\mu\mu} = \frac{1}{2}\sum_{i=1}^{N}\sum_{j\neq i} q_iq_j \left[\frac{1}{|\mathbf{r}_ ij|}-\frac{1}{|\mathbf{r}_ ij - \mathbf{d}_ j|}-\frac{1}{|\mathbf{r}_ ij - \mathbf{d}_ j|}+\frac{1}{|\mathbf{r}_ ij - \mathbf{d}_ j + \mathbf{d}_ i|}\right]$$
+$$U_{\mu\mu} = \frac{1}{2}\sum_{i=1}^{N}\sum_{j\neq i} q_iq_j \left[\frac{1}{|\mathbf{r}_ {ij}|}-\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j|}-\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j|}+\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j + \mathbf{d}_ i|}\right]$$
 
 Note that the Coulomb interactions between core and shell charges on the same site are typically excluded. Finally, the interaction of the induced dipoles with the static field is written as the sum, 
 
-$$U_{stat} = - \sum_{i=1}^{N} q_i [\mathbf{r}_ i \cdot \mathbf{E}_ i^0 - (\mathbf{r}_ i + \mathbf{d}_ i) \cdot \mathbf{E}_ i^{0'}]$$
+$$U_{stat} = - \sum_{i=1}^{N} q_i [\mathbf{r}_ i \cdot \mathbf{E}_ i^0 - (\mathbf{r}_ i + \mathbf{d}_ i) \cdot \mathbf{E}_ i^{0{'}}]$$
 
 where $\mathbf{E}_ i^0$ and $\mathbf{E}_ i^0'$ are the static fields at the core and shell charge sites, respectively. 
 
