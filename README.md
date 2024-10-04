@@ -71,7 +71,7 @@ $$U_{\mu\mu} = \frac{1}{2}\sum_{i=1}^{N}\sum_{j\neq i} q_iq_j \left[\frac{1}{|\m
 
 Note that the Coulomb interactions between core and shell charges on the same site are typically excluded. Finally, the interaction of the induced dipoles with the static field is written as the sum, 
 
-$$U_{stat} = - \sum_{i=1}^{N} q_i [\mathbf{r}_ i \cdot \mathbf{E}_ i^0 - (\mathbf{r}_ i + \mathbf{d}_ i) \cdot \mathbf{E}_ i^{0\prime }]$$
+$$U_{stat} = - \sum_{i=1}^{N} q_i \left[\mathbf{r}_ i \cdot \mathbf{E}_ i^0 - (\mathbf{r}_ i + \mathbf{d}_ i) \cdot \mathbf{E}_ i^{0\' }\right]$$
 
 where $\mathbf{E}_ i^0$ and $\mathbf{E}_ i^0'$ are the static fields at the core and shell charge sites, respectively. 
 
