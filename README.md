@@ -7,9 +7,6 @@
 *** https://www.markdownguide.org/basic-syntax/#reference-style-links
 -->
 
-\usepackage{amsmath,amssymb,amsfonts,amsthm}
-
-
 
 # Polarization Energy, $U_{pol}(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}\})$, Calculator
 
@@ -21,7 +18,7 @@
       <a href="#theory">Theory</a>
     </li>
     <li>
-      <a href="#code-stucture>Code Structure</a>
+      <a href="#code-stucture">Code Structure</a>
     </li>
     <li>
       <a href="#getting-started">Getting Started</a>
