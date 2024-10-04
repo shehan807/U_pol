@@ -18,7 +18,7 @@
       <a href="#theory">Theory</a>
     </li>
     <li>
-      <a href="#code-stucture">Code Structure</a>
+      <a href="#code-structure">Code Structure</a>
     </li>
     <li>
       <a href="#getting-started">Getting Started</a>
