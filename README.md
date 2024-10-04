@@ -64,7 +64,7 @@ where the spring constants $k_i$ can be found (for an isotropic shell model) thr
 
 The electrostatic interaction between independent polarizable atoms is written as the sum of the charge-charge interactions between all four charge sites):
 
-$$U_{\mu\mu} = \frac{1}{2}\sum_{i=1}^{N}\sum_{j\neq i} q_iq_j \left[\frac{1}{|\mathbf{r}_ {ij}|}-\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j|}-\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j|}+\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j + \mathbf{d}_ i|}\right]$$
+$$U_{\mu\mu} = \frac{1}{2}\sum_{i=1}^{N}\sum_{j\neq i} q_iq_j \left[\frac{1}{|\mathbf{r}_ {ij}|}-\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j|}-\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ i|}+\frac{1}{|\mathbf{r}_ {ij} - \mathbf{d}_ j + \mathbf{d}_ i|}\right]$$
 
 Note that the Coulomb interactions between core and shell charges on the same site are typically excluded. Finally, the interaction of the induced dipoles with the static field is written as the sum, 
 
