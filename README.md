@@ -80,7 +80,7 @@ Of course, these equations are not without limitations relative to quantum mecha
 <!-- CODE STRUCTURE -->
 ## Code Structre
 
-**Task:** For some $\{\mathbf{r}_ i\}$, determine $U_{pol}(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}^{\text{min} }\})$
+**Task:** For some $\{\mathbf{r}_ i\}$, determine $U(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}^{\text{min} }\})$
 
 ### 1. Assign Drudes (if not otherwise included in initial structure file)
 
