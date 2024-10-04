@@ -21,7 +21,7 @@
       <a href="#theory">Theory</a>
     </li>
     <li>
-      <a href="#code-structure">Code Structure</a>
+      <a href="#code-stucture>Code Structure</a>
     </li>
     <li>
       <a href="#getting-started">Getting Started</a>
@@ -36,7 +36,7 @@
 </details>
 
 
-<!-- ABOUT THE PROJECT -->
+<!-- Theory -->
 ## Theory
 
 Polarization is defined by the redistribution of a particle's electronic density due to local electric fields. In the simplest case, the polarizability of two particles with polarizabilities $\alpha$ is proportional to $-\alpha^2/r^6$ (in an average sense). This is captured in many nonpolarizable molecular dynamics (MD) codes through the Lennard-Jones potential, where
@@ -78,7 +78,7 @@ where $\mathbf{E}_ i^0$ and $\mathbf{E}_ i^{0\' }$ are the static fields at the 
 Of course, these equations are not without limitations relative to quantum mechanical theory. Namely, polarizable MD models that invoke the shell model depend on approximations of (1) representing the electronic charge density with point charges (or in other methods, dipoles), (2) treating electrostatic polarizabilities isotropically, and (3) terminating the electrostaic interactions after the dipole-dipole term. 
 
 <!-- CODE STRUCTURE -->
-## Code Structre
+## Code Structure
 
 **Task:** For some $\{\mathbf{r}_ i\}$, determine $U(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}^{\text{min} }\})$
 
