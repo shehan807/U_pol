@@ -21,6 +21,9 @@
       <a href="#theory">Theory</a>
     </li>
     <li>
+      <a href="#code-structure">Code Structure</a>
+    </li>
+    <li>
       <a href="#getting-started">Getting Started</a>
       <ul>
         <li><a href="#prerequisites">Prerequisites</a></li>
@@ -48,11 +51,52 @@ One way to represent polarization in MD is by representing dipoles of finite len
 
 ![alt text](http://localscf.com/localscf.com/images/drude.jpg) 
 
-There is a positive "core" charge located at the nucleus and a negative "shell" charge with fixed magnitude, $\pm q_{i}$, for some neutral atom site $i$ respectively. The dipole moment then determined by 
+There is a positive "core" charge located at the nucleus and a negative "shell" charge with fixed magnitude, $\pm q_{i}$, for some neutral atom site $i$ respectively. Charged species can be accomadated by inluding a permanent charge $z_{i}$ with the core (nuclear) charge. The dipole moment then determined by 
 
 $$\mathbf{\mu}_ i= -q_i \mathbf{d}_ i$$ 
 
-**The goal of this program is to determine the potential energy of the induced dipoles, $U_{ind}$, provided the initial positions of the atoms and Drude particles are given (i.e., input ``.cif``, ``.pdb``, etc.).**  
+**The goal of this program is to determine the potential energy of the induced dipoles, $U_{ind}$, provided the initial positions of the atoms and Drude particles are given (i.e., input ``.cif``, ``.pdb``, etc.).** $U_{ind}$ is broken up into three components, (1) the polarization energy, $U_{pol}$, (2) the induced-dipole/induced-dipole interaction energy, $U_{\mu\mu}$, and (3)the interaction with any static field, $U_{stat}$: 
+
+$$U_{ind} = U_{pol} + U_{\mu\mu} + U_{stat}$$
+
+The polarization energy is intuitive--it is the energy considering the harmonic spring between the core and shell charges, 
+
+$$U_{pol} = \frac{1}{2}\sum_{i=1}^{N} k_i d_i^2$$
+
+where the spring constants $k_i$ can be found (for an isotropic shell model) through the polarizability, $\alpha_i = q_i^2 / k_i$. 
+
+The electrostatic interaction between independent polarizable atoms is written as the sum of the charge-charge interactions between all four charge sites):
+
+$$U_{\mu\mu} = \frac{1}{2}\sum_{i=1}^{N}\sum_{j\neq i} q_iq_j \left[\frac{1}{|\mathbf{r}_ ij|}-\frac{1}{|\mathbf{r}_ ij - \mathbf{d}_ j|}-\frac{1}{|\mathbf{r}_ ij - \mathbf{d}_ j|}+\frac{1}{|\mathbf{r}_ ij - \mathbf{d}_ j + \mathbf{d}_ i|}\right]$$
+
+Note that the Coulomb interactions between core and shell charges on the same site are typically excluded. Finally, the interaction of the induced dipoles with the static field is written as the sum, 
+
+$$U_{stat} = - \sum_{i=1}^{N} q_i [\mathbf{r}_ i \cdot \mathbf{E}_ i^0 - (\mathbf{r}_ i + \mathbf{d}_ i) \cdot \mathbf{E}_ i^{0'}]$$
+
+where $\mathbf{E}_ i^0$ and $\mathbf{E}_ i^0'$ are the static fields at the core and shell charge sites, respectively. 
+
+Of course, these equations are not without limitations relative to quantum mechanical theory. Namely, polarizable MD models that invoke the shell model depend on approximations of (1) representing the electronic charge density with point charges (or in other methods, dipoles), (2) treating electrostatic polarizabilities isotropically, and (3) terminating the electrostaic interactions after the dipole-dipole term. 
+
+<!-- CODE STRUCTURE -->
+## Code Structre
+
+**Task:** For some $\{\mathbf{r}_ i\}$, determine $U_{pol}(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}^{\text{min} \})$
+
+### 1. Assign Drudes (if not otherwise included in initial structure file)
+
+### 2. Evaluate Initial $U_{pol}(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}\})$
+
+#### Including Thole screening
+
+### 3. Minimize $U_{pol}(\{\mathbf{r}_ {i}\},\{\mathbf{d}_ {i}\})$ w.r.t. $\{\mathbf{d}_ i\}$ 
+
+#### Obtaining gradients via JAXS
+
+#### Iterative Methods 
+
+##### Conjugate Gradient 
+##### BFGS 
+
 
 <!-- GETTING STARTED -->
 ## Getting Started
