@@ -26,11 +26,12 @@ def get_raw_inputs(simmd, system, nonbonded_force, drude_force):
             # Retrieve Drude particle parameters
             params = drude_force.getParticleParameters(j)
             parent_atom_index = params[0]
+            
             polarizability = params[6]
             print(params)
             if parent_atom_index == i:  # If Drude particle is associated with this atom
                 has_drude = True
-                # print(f" Drude Parameters for Atom {i}: Charge = {charge}, Polarizability = {polarizability}")
+                print(f" Drude Parameters for Atom {i}: Charge = {charge}, Polarizability = {polarizability}")
                 Drude.append(True)
         
         if not has_drude:

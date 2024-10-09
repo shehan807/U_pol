@@ -7,6 +7,15 @@ import numpy as np
 # from jax import grad, jit
 from scipy.optimize import minimize
 
+def set_constants():
+    global M_PI, E_CHARGE, AVOGADRO, EPSILON0, ONE_4PI_EPS0 
+    M_PI = 3.14159265358979323846
+    E_CHARGE = 1.602176634e-19
+    AVOGADRO = 6.02214076e23
+    EPSILON0 = (1e-6*8.8541878128e-12/(E_CHARGE*E_CHARGE*AVOGADRO))
+    ONE_4PI_EPS0 = (1/(4*M_PI*EPSILON0))
+
+
 def get_inputs(Drude=True):
     """
     TODO: compatable function with CrystalLatte to take .cif input 
@@ -53,7 +62,7 @@ def set_drudes(r_core, weights=None):
                 [0.000978253, 0.000978253]
             )
     #######################################################
-    k = q_shell**2 / alpha 
+    k = ONE_4PI_EPS0 * q_shell**2 / alpha 
     return r_shell, k
 
 def get_displacements(r_core, r_shell):
@@ -93,7 +102,7 @@ def Upol(d, k):
     print(f"d_mag**2={d_mag**2}")
     return 0.5 * np.sum(k * d_mag**2)
 
-def Uuu(r, q, d, k):
+def Uuu(r, q, d):
     """
     Calculates electrostatic interaction energy, 
     U_uu = 1/2 Σ Σ qiqj [1/rij - 1/(rij-dj) - 1/(rij - di) + 1/(rij - dj + di)] .
@@ -105,8 +114,6 @@ def Uuu(r, q, d, k):
         array of charges for all core and shell sites
     <np.array> d
         array of displacements between core and shell sites
-    <np.array> k
-        array of harmonic spring constants for core/shell pairs
 
     Returns:
     <np.float> Uuu
@@ -116,16 +123,20 @@ def Uuu(r, q, d, k):
     eps = 1e-30 # this may introduce some error
     Uuu_tot = 0.0
     for i in range(N):
-        for j in range(i+1,N):
+        for j in range(N):
             if i == j:
                 continue
-            rij = r[i] - r[j]
+            print(f"(i,j)=({i},{j})")
+            print(f"qi*qj = {q[i]}*{q[j]}")
+            rij = r[j] - r[i]
+            print(f"rij={rij}")
+            print(f"di, dj={d[i]},{d[j]}")
             Uuu = q[i] * q[j] * (1/np.linalg.norm(rij) 
                                 - 1/np.linalg.norm(rij - d[j])
                                 - 1/np.linalg.norm(rij + d[i])
                                 + 1/np.linalg.norm(rij - d[j] + d[i]))
             Uuu_tot += Uuu
-    return 0.5*Uuu 
+    return 0.5*ONE_4PI_EPS0*Uuu 
 
 def Ustat(r, q, d, k):
     """
@@ -154,7 +165,7 @@ def Ustat(r, q, d, k):
     E0 = np.zeros(r[0].shape)
     E0p = np.zeros(r[0].shape)
     for i in range(N):
-        for j in range(i+1, N):
+        for j in range(N):
             if j == i:
                 continue
             
@@ -162,21 +173,21 @@ def Ustat(r, q, d, k):
             rij_mag = np.linalg.norm(rij)
             E0 += q[j]*rij / rij_mag**3
             print(q[j]*rij / rij_mag**3)
-    print(f"E0={E0}")
+    #print(f"E0={E0}")
     for i in range(N):
-        for j in range(i+1,N):
+        for j in range(N):
             if j == i:
                 continue
             rij = r[j] - r[i]
             rij_mag = np.linalg.norm(rij)
             E0p += -q[j]*rij / rij_mag**3
-    print(f"E0p={E0p}")
-    print(f"q={q}")
-    print(f"r={r}")
-    print(f"E0={E0}")
-    print(f"r*E0 = {np.dot(r,E0)}")
-    print(f"(r+d)*E0p = {np.dot(r+d,E0p)}")
-    print(f"r*E0 - (r+d)*E0p = {np.dot(r,E0)-np.dot(r+d,E0p)}")
+    #print(f"E0p={E0p}")
+    #print(f"q={q}")
+    #print(f"r={r}")
+    #print(f"E0={E0}")
+    #print(f"r*E0 = {np.dot(r,E0)}")
+    #print(f"(r+d)*E0p = {np.dot(r+d,E0p)}")
+    #print(f"r*E0 - (r+d)*E0p = {np.dot(r,E0)-np.dot(r+d,E0p)}")
     return -np.sum(q * (np.dot(r, E0) - np.dot(r+d, E0p)))
 
 def Uind(r, q, d, k, E0=None, E0p=None):
@@ -203,7 +214,7 @@ def Uind(r, q, d, k, E0=None, E0p=None):
         induction energy
     """
     U_pol  = Upol(d, k)
-    U_uu   = Uuu(r, q, d, k)
+    U_uu   = Uuu(r, q, d)
     U_stat = Ustat(r, q, d, k)
     print(f"Upol={U_pol} kJ/mol\nUuu={U_uu} kJ/mol\nUstat={U_stat} kJ/mol\n")
     return U_pol + U_uu + U_stat
@@ -226,6 +237,7 @@ def opt_d(d0):
 
 def main(): 
     
+    set_constants()
     r_core, q_core = get_inputs() # get positions from input file 
     r_shell, k = set_drudes(r_core) # initialize Drude positions and get spring constants (from somewhere...)
     d = get_displacements(r_core, r_shell) # get initial core/shell displacements 

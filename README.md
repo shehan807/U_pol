@@ -70,7 +70,9 @@ Note that the Coulomb interactions between core and shell charges on the same si
 
 $$U_{stat} = - \sum_{i=1}^{N} q_i \left[\mathbf{r}_ i \cdot \mathbf{E}_ i^0 - (\mathbf{r}_ i + \mathbf{d}_ i) \cdot \mathbf{E}_ i^{0\' }\right]$$
 
-where $\mathbf{E}_ i^0$ and $\mathbf{E}_ i^{0\' }$ are the static fields at the core and shell charge sites, respectively. 
+where $\mathbf{E}_ i^0$ and $\mathbf{E}_ i^{0\' }$ are the static fields at the core and shell charge sites, respectively. The static field at some site $i$ is determined by 
+
+$$\mathbf{E}_ i^0 = \sum_{j\neq i} \frac{q_i \mathbf{r}_ {ij}}{r_{ij}^3}$$ 
 
 Of course, these equations are not without limitations relative to quantum mechanical theory. Namely, polarizable MD models that invoke the shell model depend on approximations of (1) representing the electronic charge density with point charges (or in other methods, dipoles), (2) treating electrostatic polarizabilities isotropically, and (3) terminating the electrostaic interactions after the dipole-dipole term. 
 
