@@ -98,11 +98,9 @@ def Upol(d, k):
         polarization energy
     """
     d_mag = np.linalg.norm(d, axis=1)
-    print(f"k={k}")
-    print(f"d_mag**2={d_mag**2}")
     return 0.5 * np.sum(k * d_mag**2)
 
-def Uuu(r, q, d):
+def Uuu(r_core, q, d):
     """
     Calculates electrostatic interaction energy, 
     U_uu = 1/2 Σ Σ qiqj [1/rij - 1/(rij-dj) - 1/(rij - di) + 1/(rij - dj + di)] .
@@ -119,18 +117,18 @@ def Uuu(r, q, d):
     <np.float> Uuu
         electrostatic interaction energy
     """
-    N = r.shape[0]
+    N = r_core.shape[0]
     eps = 1e-30 # this may introduce some error
     Uuu_tot = 0.0
     for i in range(N):
         for j in range(N):
             if i == j:
                 continue
-            print(f"(i,j)=({i},{j})")
-            print(f"qi*qj = {q[i]}*{q[j]}")
-            rij = r[j] - r[i]
-            print(f"rij={rij}")
-            print(f"di, dj={d[i]},{d[j]}")
+            #print(f"(i,j)=({i},{j})")
+            #print(f"qi*qj = {q[i]}*{q[j]}")
+            rij = r_core[j] - r_core[i]
+            #print(f"rij={rij}")
+            #print(f"di, dj={d[i]},{d[j]}")
             Uuu = q[i] * q[j] * (1/np.linalg.norm(rij) 
                                 - 1/np.linalg.norm(rij - d[j])
                                 - 1/np.linalg.norm(rij + d[i])
@@ -138,7 +136,7 @@ def Uuu(r, q, d):
             Uuu_tot += Uuu
     return 0.5*ONE_4PI_EPS0*Uuu 
 
-def Ustat(r, q, d, k):
+def Ustat(r_core, r_shell, q, d):
     """
     calculates static field/induced dipole interaction energy, 
     U_stat = - Σ qi [ri*E0 - (ri + di) * E0p].
@@ -150,47 +148,33 @@ def Ustat(r, q, d, k):
         array of charges for all core and shell sites
     <np.array> d
         array of displacements between core and shell sites
-    <np.array> k
-        array of harmonic spring constants for core/shell pairs
-    <np.array> E0
-        array for static field at core charge sites
-    <np.array> E0p
-        array for static field at shell charge site
 
     Returns:
     <np.float> Ustat
         field/dipole interaction energy
     """
-    N = r.shape[0]
-    E0 = np.zeros(r[0].shape)
-    E0p = np.zeros(r[0].shape)
-    for i in range(N):
-        for j in range(N):
-            if j == i:
-                continue
-            
-            rij = r[j] - r[i]
-            rij_mag = np.linalg.norm(rij)
-            E0 += q[j]*rij / rij_mag**3
-            print(q[j]*rij / rij_mag**3)
-    #print(f"E0={E0}")
-    for i in range(N):
-        for j in range(N):
-            if j == i:
-                continue
-            rij = r[j] - r[i]
-            rij_mag = np.linalg.norm(rij)
-            E0p += -q[j]*rij / rij_mag**3
-    #print(f"E0p={E0p}")
+    N = r_core.shape[0]
+    E0 = np.zeros(r_core[0].shape)
+    E0p = np.zeros(r_shell[0].shape)
+    print(f"r_core: {r_core}")
+    print(f"r_shell: {r_shell}")
+    print(f"d: {d}")
+    print(f"q: {q}")
+    for i in range(N-1):
+        j = i + 1
+        E0  +=  q[j] * (r_core[j] - r_core[i]) / np.linalg.norm(r_core[j] - r_core[i])**3
+        E0p += q[j] * (r_shell[j] - r_shell[i]) / np.linalg.norm(r_shell[j] - r_shell[i])**3
+    print(f"E0={E0}")
+    print(f"E0p={E0p}")
     #print(f"q={q}")
     #print(f"r={r}")
     #print(f"E0={E0}")
-    #print(f"r*E0 = {np.dot(r,E0)}")
-    #print(f"(r+d)*E0p = {np.dot(r+d,E0p)}")
+    print(f"r_core*E0 = {np.dot(r_core,E0)}")
+    print(f"(r_shell+d)*E0p = {np.dot(r_shell+d,E0p)}")
     #print(f"r*E0 - (r+d)*E0p = {np.dot(r,E0)-np.dot(r+d,E0p)}")
-    return -np.sum(q * (np.dot(r, E0) - np.dot(r+d, E0p)))
+    return -ONE_4PI_EPS0*np.sum(q * (np.dot(r_core, E0) - np.dot(r_core+d, E0p)))
 
-def Uind(r, q, d, k, E0=None, E0p=None):
+def Uind(r_core, r_shell, q, d, k):
     """
     calculates total induction energy, 
     U_ind = Upol + Uuu + Ustat.
@@ -214,8 +198,8 @@ def Uind(r, q, d, k, E0=None, E0p=None):
         induction energy
     """
     U_pol  = Upol(d, k)
-    U_uu   = Uuu(r, q, d)
-    U_stat = Ustat(r, q, d, k)
+    U_uu   = Uuu(r_core, q, d)
+    U_stat = Ustat(r_core, r_shell, q, d)
     print(f"Upol={U_pol} kJ/mol\nUuu={U_uu} kJ/mol\nUstat={U_stat} kJ/mol\n")
     return U_pol + U_uu + U_stat
 
@@ -243,7 +227,7 @@ def main():
     d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
 
     d = opt_d(d) # optimize Drude positions 
-    U_ind = Uind(r_core, q_core, d, k)
+    U_ind = Uind(r_core, r_shell, q_core, d, k)
     print(U_ind) 
 
 
