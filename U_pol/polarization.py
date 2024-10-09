@@ -118,7 +118,6 @@ def Uuu(r_core, q, d):
         electrostatic interaction energy
     """
     N = r_core.shape[0]
-    eps = 1e-30 # this may introduce some error
     Uuu_tot = 0.0
     for i in range(N):
         for j in range(N):
@@ -135,6 +134,65 @@ def Uuu(r_core, q, d):
                                 + 1/np.linalg.norm(rij - d[j] + d[i]))
             Uuu_tot += Uuu
     return 0.5*ONE_4PI_EPS0*Uuu 
+
+def Ucoul():
+    """
+    calculates total coulomb interaction energy, 
+    U_coul = ...
+
+    Arguments:
+    <np.array> r
+        array of positions for all core and shell sites
+    <np.array> q
+        array of charges for all core and shell sites
+    <np.array> d
+        array of displacements between core and shell sites
+
+    Returns:
+    <np.float> U_coul
+        Coulombic interaction energy
+    """
+
+    #####################RAW INPUTS########################
+    # H2O Raw Positions (Initial)
+    r_core = np.array(
+            [
+                [
+                [0.006599999964237213, 0.0, 0.0003000000142492354], [-0.05270000174641609, -0.07689999788999557, -0.002400000113993883], [-0.05270000174641609, 0.07689999788999557, -0.002400000113993883], [-0.017725946381688118, 8.293464803799111e-10, -0.0008074938086792827]
+                ]
+                , 
+                [
+                [-0.006399999838322401, 0.0, 0.29109999537467957],[0.07000000029802322, 0.0, 0.35109999775886536], [0.03220000118017197, 0.0, 0.20190000534057617], [0.017187558114528656, -6.582390441902102e-16, 0.28511083126068115]
+                ]
+            ]
+            )
+    q_core = np.array(
+            [
+                [
+                1.71636, 0.55733, 0.55733, -1.11466
+                ]
+                , 
+                [
+                1.71636, 0.55733, 0.55733, -1.11466
+                ]
+            ]
+            )
+    r_shell = np.array(
+            [
+                [
+                [0.007765778340399265, 8.520576822226844e-13, 0.0027725575491786003], [0.0,0.0,0.0], [0.0,0.0,0.0], [0.0,0.0,0.0]
+                ]
+                , 
+                [
+                [-0.007186160422861576, -1.4923919738896174e-11, 0.29226040840148926], [0.0,0.0,0.0], [0.0,0.0,0.0], [0.0,0.0,0.0]
+                ]
+            ]
+            )
+    #######################################################
+    print(r_core, r_core.shape)
+    print(q_core, q_core.shape)
+    print(r_shell, r_shell.shape)
+    return 
 
 def Ustat(r_core, r_shell, q, d):
     """
@@ -163,7 +221,7 @@ def Ustat(r_core, r_shell, q, d):
     for i in range(N-1):
         j = i + 1
         E0  +=  q[j] * (r_core[j] - r_core[i]) / np.linalg.norm(r_core[j] - r_core[i])**3
-        E0p += q[j] * (r_shell[j] - r_shell[i]) / np.linalg.norm(r_shell[j] - r_shell[i])**3
+        E0p += -q[j] * (r_shell[j] - r_shell[i]) / np.linalg.norm(r_shell[j] - r_shell[i])**3
     print(f"E0={E0}")
     print(f"E0p={E0p}")
     #print(f"q={q}")
@@ -173,7 +231,6 @@ def Ustat(r_core, r_shell, q, d):
     print(f"(r_shell+d)*E0p = {np.dot(r_shell+d,E0p)}")
     #print(f"r*E0 - (r+d)*E0p = {np.dot(r,E0)-np.dot(r+d,E0p)}")
     return -ONE_4PI_EPS0*np.sum(q * (np.dot(r_core, E0) - np.dot(r_core+d, E0p)))
-
 def Uind(r_core, r_shell, q, d, k):
     """
     calculates total induction energy, 
@@ -188,10 +245,6 @@ def Uind(r_core, r_shell, q, d, k):
         array of displacements between core and shell sites
     <np.array> k
         array of harmonic spring constants for core/shell pairs
-    <np.array> E0
-        array for static field at core charge sites
-    <np.array> E0p
-        array for static field at shell charge site
 
     Returns:
     <np.float> Uind
@@ -201,6 +254,9 @@ def Uind(r_core, r_shell, q, d, k):
     U_uu   = Uuu(r_core, q, d)
     U_stat = Ustat(r_core, r_shell, q, d)
     print(f"Upol={U_pol} kJ/mol\nUuu={U_uu} kJ/mol\nUstat={U_stat} kJ/mol\n")
+
+    print("%%% U_coul %%%")
+    Ucoul()
     return U_pol + U_uu + U_stat
 
 def opt_d(d0):
