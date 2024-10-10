@@ -192,7 +192,50 @@ def Ucoul():
     print(r_core, r_core.shape)
     print(q_core, q_core.shape)
     print(r_shell, r_shell.shape)
-    return 
+    Ucoul_tot = 0.0
+    nmols = r_core.shape[0]
+    natoms = r_core.shape[1]
+    shell_i = False
+    shell_j = False
+    for i in range(nmols):
+        for j in range(i+1, nmols):
+            print(f"\n %%%%%%% STARTED Mol_{i} --- Mol_{j} %%%%%%%%%%%")
+            for core_i in range(natoms):
+                ri = r_core[i][core_i]
+                qi = q_core[i][core_i]
+                if np.linalg.norm(r_shell[i][core_i]) > 0.0:
+                    di = get_displacements(ri, r_shell[i][core_i])
+                    shell_i = 1
+                    print(f"Atom {core_i} (Mol {i}) has a shell, di:\n{di}")
+                else:
+                    di = 0.0
+                    shell_i = 0
+                for core_j in range(natoms):
+                    print(f"\nMol_{i}, Atom_{core_i} --- Mol_{j}, Atom_{core_j}")
+                    rj = r_core[j][core_j]
+                    qj = q_core[j][core_j]
+                    if np.linalg.norm(r_shell[j][core_j]) > 0.0:
+                        dj = get_displacements(rj, r_shell[j][core_j])
+                        print(f"Atom {core_j} (Mol {j}) has a shell, dj:\n{dj}")
+                        shell_j = 1
+                    else:
+                        dj = 0.0
+                        shell_j = 0
+
+                    rij = rj - ri
+                    print(f"rij:{rij}")
+                    print(f"di:{di}")
+                    print(f"dj:{dj}")
+                    U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
+                    U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
+                                            - shell_j/np.linalg.norm(rij - dj)
+                                            - shell_i/np.linalg.norm(rij + di)) 
+                    # print(f"di:{di}\ndj:{dj}\nUcoul_core={U_coul_core}\nU_coul_shell={U_coul_shell}\nUcoul_tot={Ucoul_tot}")
+                    print(f"Ucoul_core={U_coul_core}\nU_coul_shell={U_coul_shell}\nUcoul_tot={Ucoul_tot}")
+                    Ucoul_tot += U_coul_core + U_coul_shell
+            print(f"\n %%%%%%% FINISHED Mol_{i} --- Mol_{j} %%%%%%%%%%%")
+
+    return ONE_4PI_EPS0*Ucoul_tot 
 
 def Ustat(r_core, r_shell, q, d):
     """
@@ -253,11 +296,9 @@ def Uind(r_core, r_shell, q, d, k):
     U_pol  = Upol(d, k)
     U_uu   = Uuu(r_core, q, d)
     U_stat = Ustat(r_core, r_shell, q, d)
-    print(f"Upol={U_pol} kJ/mol\nUuu={U_uu} kJ/mol\nUstat={U_stat} kJ/mol\n")
-
-    print("%%% U_coul %%%")
-    Ucoul()
-    return U_pol + U_uu + U_stat
+    U_coul = Ucoul()
+    print(f"Upol={U_pol} kJ/mol\nUuu={U_uu} kJ/mol\nUstat={U_stat} kJ/mol\nU_coul={U_coul} kJ/mol\n")
+    return U_pol + U_coul #+ U_uu + U_stat
 
 def opt_d(d0):
     """
