@@ -100,41 +100,6 @@ def Upol(d, k):
     d_mag = np.linalg.norm(d, axis=1)
     return 0.5 * np.sum(k * d_mag**2)
 
-def Uuu(r_core, q, d):
-    """
-    Calculates electrostatic interaction energy, 
-    U_uu = 1/2 Σ Σ qiqj [1/rij - 1/(rij-dj) - 1/(rij - di) + 1/(rij - dj + di)] .
-
-    Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np.array> d
-        array of displacements between core and shell sites
-
-    Returns:
-    <np.float> Uuu
-        electrostatic interaction energy
-    """
-    N = r_core.shape[0]
-    Uuu_tot = 0.0
-    for i in range(N):
-        for j in range(N):
-            if i == j:
-                continue
-            #print(f"(i,j)=({i},{j})")
-            #print(f"qi*qj = {q[i]}*{q[j]}")
-            rij = r_core[j] - r_core[i]
-            #print(f"rij={rij}")
-            #print(f"di, dj={d[i]},{d[j]}")
-            Uuu = q[i] * q[j] * (1/np.linalg.norm(rij) 
-                                - 1/np.linalg.norm(rij - d[j])
-                                - 1/np.linalg.norm(rij + d[i])
-                                + 1/np.linalg.norm(rij - d[j] + d[i]))
-            Uuu_tot += Uuu
-    return 0.5*ONE_4PI_EPS0*Uuu 
-
 def Ucoul():
     """
     calculates total coulomb interaction energy, 
@@ -152,7 +117,6 @@ def Ucoul():
     <np.float> U_coul
         Coulombic interaction energy
     """
-
     #####################RAW INPUTS########################
     # H2O Raw Positions (Initial)
     r_core = np.array(
@@ -189,9 +153,7 @@ def Ucoul():
             ]
             )
     #######################################################
-    print(r_core, r_core.shape)
-    print(q_core, q_core.shape)
-    print(r_shell, r_shell.shape)
+
     Ucoul_tot = 0.0
     nmols = r_core.shape[0]
     natoms = r_core.shape[1]
@@ -199,85 +161,36 @@ def Ucoul():
     shell_j = False
     for i in range(nmols):
         for j in range(i+1, nmols):
-            print(f"\n %%%%%%% STARTED Mol_{i} --- Mol_{j} %%%%%%%%%%%")
             for core_i in range(natoms):
                 ri = r_core[i][core_i]
                 qi = q_core[i][core_i]
                 if np.linalg.norm(r_shell[i][core_i]) > 0.0:
                     di = get_displacements(ri, r_shell[i][core_i])
                     shell_i = 1
-                    print(f"Atom {core_i} (Mol {i}) has a shell, di:\n{di}")
                 else:
                     di = 0.0
                     shell_i = 0
                 for core_j in range(natoms):
-                    print(f"\nMol_{i}, Atom_{core_i} --- Mol_{j}, Atom_{core_j}")
                     rj = r_core[j][core_j]
                     qj = q_core[j][core_j]
                     if np.linalg.norm(r_shell[j][core_j]) > 0.0:
                         dj = get_displacements(rj, r_shell[j][core_j])
-                        print(f"Atom {core_j} (Mol {j}) has a shell, dj:\n{dj}")
                         shell_j = 1
                     else:
                         dj = 0.0
                         shell_j = 0
-
                     rij = rj - ri
-                    print(f"rij:{rij}")
-                    print(f"di:{di}")
-                    print(f"dj:{dj}")
                     U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
                     U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
                                             - shell_j/np.linalg.norm(rij - dj)
                                             - shell_i/np.linalg.norm(rij + di)) 
-                    # print(f"di:{di}\ndj:{dj}\nUcoul_core={U_coul_core}\nU_coul_shell={U_coul_shell}\nUcoul_tot={Ucoul_tot}")
-                    print(f"Ucoul_core={U_coul_core}\nU_coul_shell={U_coul_shell}\nUcoul_tot={Ucoul_tot}")
                     Ucoul_tot += U_coul_core + U_coul_shell
-            print(f"\n %%%%%%% FINISHED Mol_{i} --- Mol_{j} %%%%%%%%%%%")
-
     return ONE_4PI_EPS0*Ucoul_tot 
 
-def Ustat(r_core, r_shell, q, d):
-    """
-    calculates static field/induced dipole interaction energy, 
-    U_stat = - Σ qi [ri*E0 - (ri + di) * E0p].
-
-    Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np.array> d
-        array of displacements between core and shell sites
-
-    Returns:
-    <np.float> Ustat
-        field/dipole interaction energy
-    """
-    N = r_core.shape[0]
-    E0 = np.zeros(r_core[0].shape)
-    E0p = np.zeros(r_shell[0].shape)
-    print(f"r_core: {r_core}")
-    print(f"r_shell: {r_shell}")
-    print(f"d: {d}")
-    print(f"q: {q}")
-    for i in range(N-1):
-        j = i + 1
-        E0  +=  q[j] * (r_core[j] - r_core[i]) / np.linalg.norm(r_core[j] - r_core[i])**3
-        E0p += -q[j] * (r_shell[j] - r_shell[i]) / np.linalg.norm(r_shell[j] - r_shell[i])**3
-    print(f"E0={E0}")
-    print(f"E0p={E0p}")
-    #print(f"q={q}")
-    #print(f"r={r}")
-    #print(f"E0={E0}")
-    print(f"r_core*E0 = {np.dot(r_core,E0)}")
-    print(f"(r_shell+d)*E0p = {np.dot(r_shell+d,E0p)}")
-    #print(f"r*E0 - (r+d)*E0p = {np.dot(r,E0)-np.dot(r+d,E0p)}")
-    return -ONE_4PI_EPS0*np.sum(q * (np.dot(r_core, E0) - np.dot(r_core+d, E0p)))
 def Uind(r_core, r_shell, q, d, k):
     """
     calculates total induction energy, 
-    U_ind = Upol + Uuu + Ustat.
+    U_ind = Upol + Ucoul.
 
     Arguments:
     <np.array> r
@@ -294,11 +207,9 @@ def Uind(r_core, r_shell, q, d, k):
         induction energy
     """
     U_pol  = Upol(d, k)
-    U_uu   = Uuu(r_core, q, d)
-    U_stat = Ustat(r_core, r_shell, q, d)
     U_coul = Ucoul()
-    print(f"Upol={U_pol} kJ/mol\nUuu={U_uu} kJ/mol\nUstat={U_stat} kJ/mol\nU_coul={U_coul} kJ/mol\n")
-    return U_pol + U_coul #+ U_uu + U_stat
+    print(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
+    return U_pol + U_coul 
 
 def opt_d(d0):
     """
@@ -326,7 +237,6 @@ def main():
     d = opt_d(d) # optimize Drude positions 
     U_ind = Uind(r_core, r_shell, q_core, d, k)
     print(U_ind) 
-
 
 
 if __name__ == "__main__":
