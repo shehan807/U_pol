@@ -64,6 +64,7 @@ Topology().loadBondDefinitions(residue_file)
 # DrudeSCF integrator for optimizing Drude oscillators.
 # timestep shouldn't matter, because atoms are frozen by zeroing masses in xml file.  But use a small timestep anyway
 integrator = DrudeSCFIntegrator(0.00001*picoseconds)
+integrator.setRandomNumberSeed(123)
 
 # read in pdb file
 pdb = PDBFile(pdb_file)
