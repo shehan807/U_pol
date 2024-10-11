@@ -245,7 +245,7 @@ def Upol(d, k):
     d_mag = np.linalg.norm(d, axis=2)
     return 0.5 * np.sum(k * d_mag**2)
 
-def Ucoul_vec(r_core, q_core, r_shell):
+def Ucoul_vec(r_core, q_core, r_shell, q_shell):
     """
     calculates total coulomb interaction energy, 
     U_coul = ...
@@ -263,13 +263,60 @@ def Ucoul_vec(r_core, q_core, r_shell):
         Coulombic interaction energy
     """
     print(f"\n TESTING U_coul Vectorization")
-    U_coul = q_core * q_core 
+    print(f"R_CORE:")
+    print(r_core)
+    print(r_core.shape)
+    #print(f"R_SHELL:")
+    #print(r_shell)
+    #print(r_shell.shape)
+    print("Rij Matrix")
+    print(r_core[:, np.newaxis, :, :])
+    print(r_core[np.newaxis, :, :, :])
+    Rij = r_core[:, np.newaxis, :, :] - r_core[np.newaxis, :, :, :]
+    print(Rij.shape) 
+    print(Rij)
+    dij = r_core - r_shell
+    Dij = dij[:,np.newaxis,:,:]
+    print(Rij - Dij)
+    print(f"Q_CORE:")
+    print(q_core)
+    print(q_core.shape)
+    Qij = q_core*q_core
+    U_coul = 0.0
+        # Calculate pairwise displacements between all molecules
+    r_core_expanded_i = r_core[:, np.newaxis, :, :]  # Shape: (nmols, 1, natoms, 3)
+    r_core_expanded_j = r_core[np.newaxis, :, :, :]  # Shape: (1, nmols, natoms, 3)
+    
+    # Pairwise distance vectors (Rij)
+    r_core_diff = r_core_expanded_i - r_core_expanded_j  # Shape: (nmols, nmols, natoms, natoms, 3)
+    rij_norms = np.linalg.norm(r_core_diff, axis=-1)  # Shape: (nmols, nmols, natoms, natoms)
+    
+    # Mask to exclude intramolecular interactions
+    mask = np.triu(np.ones(rij_norms.shape, dtype=bool), k=1)  # Shape: (nmols, nmols, natoms, natoms)
 
-    print(U_coul)
-    # U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
-    # U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
-                            #- shell_j/np.linalg.norm(rij - dj)
-                            #- shell_i/np.linalg.norm(rij + di)) 
+    # Compute pairwise Coulomb core-core interactions
+    U_coul_core = (q_core[:, :, np.newaxis, np.newaxis] * q_core[np.newaxis, np.newaxis, :, :]) / rij_norms  # Shape: (nmols, nmols, natoms, natoms)
+
+    # Shell terms (similar to core-core calculation)
+    r_shell_expanded_i = r_shell[:, np.newaxis, :, :]  # Shape: (nmols, 1, natoms, 3)
+    r_shell_expanded_j = r_shell[np.newaxis, :, :, :]  # Shape: (1, nmols, natoms, 3)
+
+    # Shell displacements
+    di = np.where(np.linalg.norm(r_shell, axis=-1, keepdims=True) > 0, r_shell - r_core, 0.0)  # Shape: (nmols, natoms, 3)
+    dj = np.where(np.linalg.norm(r_shell, axis=-1, keepdims=True) > 0, r_shell - r_core, 0.0)  # Shape: (nmols, natoms, 3)
+    
+    di_expanded = di[:, np.newaxis, :, :]  # Shape: (nmols, 1, natoms, 3)
+    dj_expanded = dj[np.newaxis, :, :, :]  # Shape: (1, nmols, natoms, 3)
+    
+    # Shell terms
+    U_coul_shell = (q_shell[:, :, np.newaxis, np.newaxis] * q_shell[np.newaxis, np.newaxis, :, :]) * (
+        1 / np.linalg.norm(r_core_diff - dj_expanded + di_expanded, axis=-1)  # Full displacement
+        - 1 / np.linalg.norm(r_core_diff - dj_expanded, axis=-1)  # Shell to core displacement
+        - 1 / np.linalg.norm(r_core_diff + di_expanded, axis=-1)  # Core to shell displacement
+    )
+
+    # Total U_coul
+    Ucoul_tot = np.sum((U_coul_core + U_coul_shell)[mask])
     return ONE_4PI_EPS0*U_coul 
 
 def Ucoul(r_core, q_core, r_shell, q_shell):
@@ -346,7 +393,7 @@ def Uind(r_core, q_core, r_shell, q_shell, d, k):
         induction energy
     """
     U_pol  = Upol(d, k)
-    U_coul_vec = Ucoul_vec(r_core, q_core, r_shell)
+    U_coul_vec = Ucoul_vec(r_core, q_core, r_shell, q_shell)
     U_coul = Ucoul(r_core, q_core, r_shell, q_shell)
     print(f"VECTORIZED U_COUL vs ORIGINAL U_COUL:\n{U_coul - U_coul_vec}")
     print("=-=-=-=-=-=-=-=-=-=-=-=-Python Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
@@ -377,17 +424,17 @@ def main():
     print(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
     print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
     
-    print("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
-                                                pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
-                                                ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
-                                                res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
-    d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-    U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
-    print(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
-    print(f"Python U_ind = {U_ind:.4f} kJ/mol")
-    print(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
-    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+    #print("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+    #r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+    #                                            pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
+    #                                            ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
+    #                                            res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
+    #d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+    #U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
+    #print(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
+    #print(f"Python U_ind = {U_ind:.4f} kJ/mol")
+    #print(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
+    #print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
 
 
 
