@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
 # Import standard Python modules 
+from openmm.app import *
+from openmm import *
+from simtk.unit import *
 import numpy as np
 # import jax
 # import jax.numpy as jnp
@@ -8,30 +11,108 @@ import numpy as np
 from scipy.optimize import minimize
 
 def set_constants():
-    global M_PI, E_CHARGE, AVOGADRO, EPSILON0, ONE_4PI_EPS0 
+    global ONE_4PI_EPS0 
     M_PI = 3.14159265358979323846
     E_CHARGE = 1.602176634e-19
     AVOGADRO = 6.02214076e23
     EPSILON0 = (1e-6*8.8541878128e-12/(E_CHARGE*E_CHARGE*AVOGADRO))
     ONE_4PI_EPS0 = (1/(4*M_PI*EPSILON0))
 
-
-def get_inputs(Drude=True):
+def get_DrudeTypeMap(forcefield):
     """
-    TODO: compatable function with CrystalLatte to take .cif input 
-    and output arrays for core site charges and positions. For now, 
-    inputs are from (a) manual or (b) MDAnalysis.
+    For a given openmm force field, get the 'DrudeTypeMap'
+    to distinguish the name of Drude atom types. 
     """
+    from openmm.app.forcefield import DrudeGenerator
+    drudeTypeMap = {}
+    for force in forcefield._forces:
+        if isinstance(force, DrudeGenerator):
+            for type in force.typeMap:
+                drudeTypeMap[type] = force.typeMap[type][0]
 
-    #####################RAW INPUTS########################
-    # H2O Raw Positions (Initial)
+def get_inputs(openmm=True, psi4=False, **kwargs):
+    """
+    Function to generate inputs based on OpenMM realization (i.e., 
+    pdb, ff.xml, and residue.xml as inputs) or Psi4 implementation
+    (i.e., mol.cif). 
+    
+    Arguments:
+    <bool> openmm
+        boolean for openmm inputs
+        **kwargs: keyword arguments 
+            <str> pdb 
+                pdb path 
+            <str> ff_xml 
+                ff.xml path 
+            <str> res_xml
+                residue.xml path 
+    <bool> psi4
+        boolean for psi4 inputs
+        **kwargs: keyword arguments 
+            <str> cif 
+                mol.cif path 
+    """
+    if openmm:
+        # Handle input errors 
+        inputs = ['pdb','ff_xml','res_xml']
+        for input in inputs: 
+            if input not in kwargs:
+                raise ValueError(f"Missing '{input}' file for OpenMM implementation.")
+        
+        # use openMM to obtain bond definitions and atom/Drude positions
+        Topology().loadBondDefinitions(kwargs['res_xml'])
+        integrator = DrudeSCFIntegrator(0.00001*picoseconds)
+        pdb = PDBFile(kwargs['pdb'])
+        modeller = Modeller(pdb.topology, pdb.positions)
+        forcefield = ForceField(kwargs['ff_xml'])
+        drudeTypeMap = get_DrudeTypeMap(forcefield)
+        modeller.addExtraParticles(forcefield)
+        system = forcefield.createSystem(modeller.topology, constraints=None, rigidWater=True)
+        for i in range(system.getNumForces()):
+            f = system.getForce(i)
+            f.setForceGroup(i)
+        drude = [f for f in system.getForces() if isinstance(f, DrudeForce)][0]
+        nonbonded = [f for f in system.getForces() if isinstance(f, NonbondedForce)][0]
+        numDrudes = drude.getNumParticles()
+        drude_indices = [drude.getParticleParameters(i)[0] for i in range(numDrudes)]
+        
+        # Initialize r_core, r_shell, q_core (q_shell is not needed)
+        positions = modeller.getPositions()
+        top = modeller.getTopology()
+        nmols = top._numResidues
+        r_core = []
+        r_shell = []
+        q_core = []
+        for i, res in enumerate(top.residues()):
+            
+            for j, atom in enumerate(res.atoms()):
+                charge, sigma, epsilon = nonbonded.getParticleParameters(atom.index)
+                if j in drude_indices:
+                    drude_params = drude.getParticleParameters(drude_indices.index(j))
+                    alpha = drude_params[6]
+                else:
+                    alpha = 0.0 * nanometer
+                pos = list(positions[i])
+                pos = [p.value_in_unit(nanometer) for p in pos]
+                charge = charge.value_in_unit(elementary_charge)
+                alpha = alpha.value_in_unit(nanometer)
+
+                print(f"Atom {j} (Mol {i}): {atom.name}")
+                print(list(pos[j]))
+                print(f"q_{j}={charge}; alpha={alpha}")
+                
+
+    elif psi4:
+        pass 
+        # add initial drude particles positions randomly 
+        # position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
+    #######################################################
     r_core = np.array(
             [[0.006599999964237213, 0.0, 0.0003000000142492354], [-0.006399999838322401, 0.0, 0.29109999537467957]]
             )
     q_core = np.array(
             [1.71636, 1.71636]
             )
-    #######################################################
         
     return r_core, q_core
 
@@ -100,41 +181,6 @@ def Upol(d, k):
     d_mag = np.linalg.norm(d, axis=1)
     return 0.5 * np.sum(k * d_mag**2)
 
-def Uuu(r_core, q, d):
-    """
-    Calculates electrostatic interaction energy, 
-    U_uu = 1/2 Σ Σ qiqj [1/rij - 1/(rij-dj) - 1/(rij - di) + 1/(rij - dj + di)] .
-
-    Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np.array> d
-        array of displacements between core and shell sites
-
-    Returns:
-    <np.float> Uuu
-        electrostatic interaction energy
-    """
-    N = r_core.shape[0]
-    Uuu_tot = 0.0
-    for i in range(N):
-        for j in range(N):
-            if i == j:
-                continue
-            #print(f"(i,j)=({i},{j})")
-            #print(f"qi*qj = {q[i]}*{q[j]}")
-            rij = r_core[j] - r_core[i]
-            #print(f"rij={rij}")
-            #print(f"di, dj={d[i]},{d[j]}")
-            Uuu = q[i] * q[j] * (1/np.linalg.norm(rij) 
-                                - 1/np.linalg.norm(rij - d[j])
-                                - 1/np.linalg.norm(rij + d[i])
-                                + 1/np.linalg.norm(rij - d[j] + d[i]))
-            Uuu_tot += Uuu
-    return 0.5*ONE_4PI_EPS0*Uuu 
-
 def Ucoul():
     """
     calculates total coulomb interaction energy, 
@@ -189,9 +235,6 @@ def Ucoul():
             ]
             )
     #######################################################
-    print(r_core, r_core.shape)
-    print(q_core, q_core.shape)
-    print(r_shell, r_shell.shape)
     Ucoul_tot = 0.0
     nmols = r_core.shape[0]
     natoms = r_core.shape[1]
@@ -199,81 +242,34 @@ def Ucoul():
     shell_j = False
     for i in range(nmols):
         for j in range(i+1, nmols):
-            print(f"\n %%%%%%% STARTED Mol_{i} --- Mol_{j} %%%%%%%%%%%")
             for core_i in range(natoms):
                 ri = r_core[i][core_i]
                 qi = q_core[i][core_i]
                 if np.linalg.norm(r_shell[i][core_i]) > 0.0:
                     di = get_displacements(ri, r_shell[i][core_i])
                     shell_i = 1
-                    print(f"Atom {core_i} (Mol {i}) has a shell, di:\n{di}")
                 else:
                     di = 0.0
                     shell_i = 0
                 for core_j in range(natoms):
-                    print(f"\nMol_{i}, Atom_{core_i} --- Mol_{j}, Atom_{core_j}")
                     rj = r_core[j][core_j]
                     qj = q_core[j][core_j]
                     if np.linalg.norm(r_shell[j][core_j]) > 0.0:
                         dj = get_displacements(rj, r_shell[j][core_j])
-                        print(f"Atom {core_j} (Mol {j}) has a shell, dj:\n{dj}")
                         shell_j = 1
                     else:
                         dj = 0.0
                         shell_j = 0
 
                     rij = rj - ri
-                    print(f"rij:{rij}")
-                    print(f"di:{di}")
-                    print(f"dj:{dj}")
                     U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
                     U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
                                             - shell_j/np.linalg.norm(rij - dj)
                                             - shell_i/np.linalg.norm(rij + di)) 
-                    # print(f"di:{di}\ndj:{dj}\nUcoul_core={U_coul_core}\nU_coul_shell={U_coul_shell}\nUcoul_tot={Ucoul_tot}")
-                    print(f"Ucoul_core={U_coul_core}\nU_coul_shell={U_coul_shell}\nUcoul_tot={Ucoul_tot}")
                     Ucoul_tot += U_coul_core + U_coul_shell
-            print(f"\n %%%%%%% FINISHED Mol_{i} --- Mol_{j} %%%%%%%%%%%")
 
     return ONE_4PI_EPS0*Ucoul_tot 
 
-def Ustat(r_core, r_shell, q, d):
-    """
-    calculates static field/induced dipole interaction energy, 
-    U_stat = - Σ qi [ri*E0 - (ri + di) * E0p].
-
-    Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np.array> d
-        array of displacements between core and shell sites
-
-    Returns:
-    <np.float> Ustat
-        field/dipole interaction energy
-    """
-    N = r_core.shape[0]
-    E0 = np.zeros(r_core[0].shape)
-    E0p = np.zeros(r_shell[0].shape)
-    print(f"r_core: {r_core}")
-    print(f"r_shell: {r_shell}")
-    print(f"d: {d}")
-    print(f"q: {q}")
-    for i in range(N-1):
-        j = i + 1
-        E0  +=  q[j] * (r_core[j] - r_core[i]) / np.linalg.norm(r_core[j] - r_core[i])**3
-        E0p += -q[j] * (r_shell[j] - r_shell[i]) / np.linalg.norm(r_shell[j] - r_shell[i])**3
-    print(f"E0={E0}")
-    print(f"E0p={E0p}")
-    #print(f"q={q}")
-    #print(f"r={r}")
-    #print(f"E0={E0}")
-    print(f"r_core*E0 = {np.dot(r_core,E0)}")
-    print(f"(r_shell+d)*E0p = {np.dot(r_shell+d,E0p)}")
-    #print(f"r*E0 - (r+d)*E0p = {np.dot(r,E0)-np.dot(r+d,E0p)}")
-    return -ONE_4PI_EPS0*np.sum(q * (np.dot(r_core, E0) - np.dot(r_core+d, E0p)))
 def Uind(r_core, r_shell, q, d, k):
     """
     calculates total induction energy, 
@@ -294,10 +290,8 @@ def Uind(r_core, r_shell, q, d, k):
         induction energy
     """
     U_pol  = Upol(d, k)
-    U_uu   = Uuu(r_core, q, d)
-    U_stat = Ustat(r_core, r_shell, q, d)
     U_coul = Ucoul()
-    print(f"Upol={U_pol} kJ/mol\nUuu={U_uu} kJ/mol\nUstat={U_stat} kJ/mol\nU_coul={U_coul} kJ/mol\n")
+    print(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
     return U_pol + U_coul #+ U_uu + U_stat
 
 def opt_d(d0):
@@ -319,13 +313,15 @@ def opt_d(d0):
 def main(): 
     
     set_constants()
-    r_core, q_core = get_inputs() # get positions from input file 
-    r_shell, k = set_drudes(r_core) # initialize Drude positions and get spring constants (from somewhere...)
-    d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+    r_core, q_core = get_inputs(pdb="../benchmarks/OpenMM/water/water.pdb",
+                             ff_xml="../benchmarks/OpenMM/water/water.xml",
+                             res_xml="../benchmarks/OpenMM/water/water_residue.xml")
+    # r_shell, k = set_drudes(r_core) # initialize Drude positions and get spring constants (from somewhere...)
+    # d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
 
-    d = opt_d(d) # optimize Drude positions 
-    U_ind = Uind(r_core, r_shell, q_core, d, k)
-    print(U_ind) 
+    # d = opt_d(d) # optimize Drude positions 
+    # U_ind = Uind(r_core, r_shell, q_core, d, k)
+    # print(U_ind) 
 
 
 
