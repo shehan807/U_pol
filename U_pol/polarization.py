@@ -319,12 +319,9 @@ def Ucoul(r_core, q_core, r_shell, q_shell):
 
                     rij = rj - ri
                     U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
-                    #U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
-                    #                        - shell_j/np.linalg.norm(rij - dj)
-                    #                        - shell_i/np.linalg.norm(rij + di)) 
                     U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
-                                + qi * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
-                                +  qi_shell * qj * (shell_i/np.linalg.norm(rij + di)) 
+                                +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
+                                +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
                     Ucoul_tot += U_coul_core + U_coul_shell
 
     return ONE_4PI_EPS0*Ucoul_tot 
