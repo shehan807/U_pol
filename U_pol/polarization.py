@@ -283,40 +283,7 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
     print(q_core.shape)
     Qij = q_core*q_core
     U_coul = 0.0
-        # Calculate pairwise displacements between all molecules
-    r_core_expanded_i = r_core[:, np.newaxis, :, :]  # Shape: (nmols, 1, natoms, 3)
-    r_core_expanded_j = r_core[np.newaxis, :, :, :]  # Shape: (1, nmols, natoms, 3)
     
-    # Pairwise distance vectors (Rij)
-    r_core_diff = r_core_expanded_i - r_core_expanded_j  # Shape: (nmols, nmols, natoms, natoms, 3)
-    rij_norms = np.linalg.norm(r_core_diff, axis=-1)  # Shape: (nmols, nmols, natoms, natoms)
-    
-    # Mask to exclude intramolecular interactions
-    mask = np.triu(np.ones(rij_norms.shape, dtype=bool), k=1)  # Shape: (nmols, nmols, natoms, natoms)
-
-    # Compute pairwise Coulomb core-core interactions
-    U_coul_core = (q_core[:, :, np.newaxis, np.newaxis] * q_core[np.newaxis, np.newaxis, :, :]) / rij_norms  # Shape: (nmols, nmols, natoms, natoms)
-
-    # Shell terms (similar to core-core calculation)
-    r_shell_expanded_i = r_shell[:, np.newaxis, :, :]  # Shape: (nmols, 1, natoms, 3)
-    r_shell_expanded_j = r_shell[np.newaxis, :, :, :]  # Shape: (1, nmols, natoms, 3)
-
-    # Shell displacements
-    di = np.where(np.linalg.norm(r_shell, axis=-1, keepdims=True) > 0, r_shell - r_core, 0.0)  # Shape: (nmols, natoms, 3)
-    dj = np.where(np.linalg.norm(r_shell, axis=-1, keepdims=True) > 0, r_shell - r_core, 0.0)  # Shape: (nmols, natoms, 3)
-    
-    di_expanded = di[:, np.newaxis, :, :]  # Shape: (nmols, 1, natoms, 3)
-    dj_expanded = dj[np.newaxis, :, :, :]  # Shape: (1, nmols, natoms, 3)
-    
-    # Shell terms
-    U_coul_shell = (q_shell[:, :, np.newaxis, np.newaxis] * q_shell[np.newaxis, np.newaxis, :, :]) * (
-        1 / np.linalg.norm(r_core_diff - dj_expanded + di_expanded, axis=-1)  # Full displacement
-        - 1 / np.linalg.norm(r_core_diff - dj_expanded, axis=-1)  # Shell to core displacement
-        - 1 / np.linalg.norm(r_core_diff + di_expanded, axis=-1)  # Core to shell displacement
-    )
-
-    # Total U_coul
-    Ucoul_tot = np.sum((U_coul_core + U_coul_shell)[mask])
     return ONE_4PI_EPS0*U_coul 
 
 def Ucoul(r_core, q_core, r_shell, q_shell):
