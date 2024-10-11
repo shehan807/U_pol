@@ -155,8 +155,9 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
                     drude_pos = list(positions[drude_index])
                     drude_pos = [p.value_in_unit(nanometer) for p in drude_pos]
                     drude_params = drude.getParticleParameters(parent_indices.index(atom.index))
+                    drude_charge = drude_params[5].value_in_unit(elementary_charge)
                     alpha = drude_params[6]
-                    res_shell_charge.append(-charge)
+                    res_shell_charge.append(drude_charge)
                 else:
                     res_shell_charge.append(0.0)
                     drude_pos = [0.0,0.0,0.0]
@@ -191,15 +192,7 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
     q_shell = np.array(q_shell)
     alphas = np.array(alphas)
     k = np.divide(ONE_4PI_EPS0*(q_shell)**2, alphas, where=alphas != 0, out=np.zeros_like(alphas))
-    #######################################################
-    #r_core = np.array(
-    #        [[0.006599999964237213, 0.0, 0.0003000000142492354], [-0.006399999838322401, 0.0, 0.29109999537467957]]
-    #        )
-    #q_core = np.array(
-    #        [1.71636, 1.71636]
-    #        )
-        
-    return r_core, q_core, r_shell, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
+    return r_core, q_core, r_shell, q_shell, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
 
 
 def set_drudes(r_core, weights=None):
@@ -252,7 +245,34 @@ def Upol(d, k):
     d_mag = np.linalg.norm(d, axis=2)
     return 0.5 * np.sum(k * d_mag**2)
 
-def Ucoul(r_core, q_core, r_shell):
+def Ucoul_vec(r_core, q_core, r_shell):
+    """
+    calculates total coulomb interaction energy, 
+    U_coul = ...
+
+    Arguments:
+    <np.array> r
+        array of positions for all core and shell sites
+    <np.array> q
+        array of charges for all core and shell sites
+    <np.array> d
+        array of displacements between core and shell sites
+
+    Returns:
+    <np.float> U_coul
+        Coulombic interaction energy
+    """
+    print(f"\n TESTING U_coul Vectorization")
+    U_coul = q_core * q_core 
+
+    print(U_coul)
+    # U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
+    # U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
+                            #- shell_j/np.linalg.norm(rij - dj)
+                            #- shell_i/np.linalg.norm(rij + di)) 
+    return ONE_4PI_EPS0*U_coul 
+
+def Ucoul(r_core, q_core, r_shell, q_shell):
     """
     calculates total coulomb interaction energy, 
     U_coul = ...
@@ -279,6 +299,7 @@ def Ucoul(r_core, q_core, r_shell):
             for core_i in range(natoms):
                 ri = r_core[i][core_i]
                 qi = q_core[i][core_i]
+                qi_shell = q_shell[i][core_i]
                 if np.linalg.norm(r_shell[i][core_i]) > 0.0:
                     di = get_displacements(ri, r_shell[i][core_i])
                     shell_i = 1
@@ -288,6 +309,7 @@ def Ucoul(r_core, q_core, r_shell):
                 for core_j in range(natoms):
                     rj = r_core[j][core_j]
                     qj = q_core[j][core_j]
+                    qj_shell = q_shell[j][core_j]
                     if np.linalg.norm(r_shell[j][core_j]) > 0.0:
                         dj = get_displacements(rj, r_shell[j][core_j])
                         shell_j = 1
@@ -297,14 +319,17 @@ def Ucoul(r_core, q_core, r_shell):
 
                     rij = rj - ri
                     U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
-                    U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
-                                            - shell_j/np.linalg.norm(rij - dj)
-                                            - shell_i/np.linalg.norm(rij + di)) 
+                    #U_coul_shell = qi * qj * (shell_i*shell_j/np.linalg.norm(rij - dj + di)
+                    #                        - shell_j/np.linalg.norm(rij - dj)
+                    #                        - shell_i/np.linalg.norm(rij + di)) 
+                    U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
+                                + qi * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
+                                +  qi_shell * qj * (shell_i/np.linalg.norm(rij + di)) 
                     Ucoul_tot += U_coul_core + U_coul_shell
 
     return ONE_4PI_EPS0*Ucoul_tot 
 
-def Uind(r_core, r_shell, q_core, d, k):
+def Uind(r_core, q_core, r_shell, q_shell, d, k):
     """
     calculates total induction energy, 
     U_ind = Upol + Uuu + Ustat.
@@ -324,7 +349,9 @@ def Uind(r_core, r_shell, q_core, d, k):
         induction energy
     """
     U_pol  = Upol(d, k)
-    U_coul = Ucoul(r_core, q_core, r_shell)
+    U_coul_vec = Ucoul_vec(r_core, q_core, r_shell)
+    U_coul = Ucoul(r_core, q_core, r_shell, q_shell)
+    print(f"VECTORIZED U_COUL vs ORIGINAL U_COUL:\n{U_coul - U_coul_vec}")
     print("=-=-=-=-=-=-=-=-=-=-=-=-Python Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
     print(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
     return U_pol + U_coul
@@ -342,24 +369,24 @@ def main():
     set_constants()
     
     print("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    r_core, q_core, r_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+    r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
                                                 pdb="../benchmarks/OpenMM/water/water.pdb",
                                                 ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                 res_xml="../benchmarks/OpenMM/water/water_residue.xml")
     d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-    U_ind = Uind(r_core, r_shell, q_core, d, k)
+    U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
     print(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
     print(f"Python U_ind = {U_ind:.4f} kJ/mol")
     print(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
     print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
     
     print("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    r_core, q_core, r_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+    r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
                                                 pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
                                                 ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
                                                 res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
     d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-    U_ind = Uind(r_core, r_shell, q_core, d, k)
+    U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
     print(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
     print(f"Python U_ind = {U_ind:.4f} kJ/mol")
     print(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
