@@ -236,47 +236,16 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
     Qj_shell = q_shell[np.newaxis,:,np.newaxis,:]
     Qi_core  = q_core[:,np.newaxis,:,np.newaxis]
     Qj_core  = q_core[np.newaxis,:,np.newaxis,:]
-
-
-    Q_shell = q_shell[np.newaxis,:,np.newaxis,:]
-    Q_core  = q_core[:,np.newaxis,:,np.newaxis]
-    Qij_core_shell  = q_core[np.newaxis,:,np.newaxis,:] * q_shell[:,np.newaxis,:,np.newaxis]
-    Qij_shell_core  =q_shell[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
-    Qij_shell_shell = q_shell[np.newaxis,:,np.newaxis,:] * q_shell[:,np.newaxis,:,np.newaxis]
     
     U_coul =       Qi_core  * Qj_core  / np.linalg.norm(Rij,axis=-1)\
                  + Qi_shell * Qj_core  / np.linalg.norm(Rij + Di,axis=-1)\
                  + Qi_core  * Qj_shell / np.linalg.norm(Rij - Dj,axis=-1)\
                  + Qi_shell * Qj_shell / np.linalg.norm(Rij + Di - Dj,axis=-1)       
 
+    # exclude double counting
     I = np.eye(U_coul.shape[0])
     U_coul = U_coul * (1 - I[:,:,np.newaxis,np.newaxis])
-    U_coul = 0.5*ONE_4PI_EPS0*np.ma.masked_invalid(U_coul).sum()
-    print(f"CLEANED UP: {U_coul}")
-
-    U_coul_core_vec = Qij/np.linalg.norm(Rij,axis=4)
-
-    U_coul_shell_vec  = Qij_core_shell / np.linalg.norm(Rij+Di_nb[:,np.newaxis,:,np.newaxis,:],axis=-1) # qi_shell * qj       * (shell_i/np.linalg.norm(rij + di))
-    U_coul_shell_vec1 = Qij_shell_core / np.linalg.norm(Rij-Di_nb[np.newaxis,:,np.newaxis,:,:],axis=-1) # qj_shell * qi       * (shell_j/np.linalg.norm(rij - dj))
-    U_coul_shell_vec2 = Qij_shell_shell / np.linalg.norm(Rij+Di_nb[:,np.newaxis,:,np.newaxis,:]-Di_nb[np.newaxis,:,np.newaxis,:,:],axis=-1) # qi_shell * qj_shell       * (shell_j/np.linalg.norm(rij - dj))
-    
-    I = np.eye(U_coul_core_vec.shape[0])
-    U_coul_core = U_coul_core_vec * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
-    U_coul_core = np.ma.masked_invalid(U_coul_core).sum()
-    
-    I = np.eye(U_coul_shell_vec.shape[0])
-    U_coul_shell0 = U_coul_shell_vec * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
-    U_coul_shell0 = np.ma.masked_invalid(U_coul_shell0).sum()
-    
-    I = np.eye(U_coul_shell_vec1.shape[0])
-    U_coul_shell1 = U_coul_shell_vec1 * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
-    U_coul_shell1 = np.ma.masked_invalid(U_coul_shell1).sum()
-    
-    I = np.eye(U_coul_shell_vec2.shape[0])
-    U_coul_shell2 = U_coul_shell_vec2 * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
-    U_coul_shell2 = np.ma.masked_invalid(U_coul_shell2).sum()
-
-    U_coul = U_coul_core + U_coul_shell0 + U_coul_shell1 + U_coul_shell2
+    U_coul = np.ma.masked_invalid(U_coul).sum()
     
     return ONE_4PI_EPS0*0.5*U_coul 
 
