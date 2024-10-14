@@ -6,6 +6,7 @@ from openmm import *
 from simtk.unit import *
 import numpy as np
 from scipy.optimize import minimize
+import logging
 
 def get_raw_inputs(simmd, system, nonbonded_force, drude_force):
     positions = simmd.context.getState(getPositions=True).getPositions()
@@ -42,12 +43,12 @@ def get_raw_inputs(simmd, system, nonbonded_force, drude_force):
         r.append(pos)
         # Output relevant information
     
-    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
-    print("\nq")
-    print(q)
-    print("\nr")
-    print(r)
-    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
+    logger.debug("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
+    logger.debug("\nq")
+    logger.debug(q)
+    logger.debug("\nr")
+    logger.debug(r)
+    logger.debug("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
 
 def set_constants():
     global ONE_4PI_EPS0 
@@ -127,11 +128,13 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
         simmd.step(1)
         state = simmd.context.getState(getEnergy=True,getForces=True,getVelocities=True,getPositions=True)
         Uind_openmm = state.getPotentialEnergy() 
-        print("=-=-=-=-=-=-=-=-=-=-=-=-OpenMM Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        print("total Energy", str(Uind_openmm))
+        logger.info("=-=-=-=-=-=-=-=-=-=-=-=-OpenMM Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+        logger.info("total Energy" + str(Uind_openmm))
         for j in range(system.getNumForces()):
            f = system.getForce(j)
-           print(type(f), str(simmd.context.getState(getEnergy=True, groups=2**j).getPotentialEnergy()))
+           PE = str(type(f)) + str(simmd.context.getState(getEnergy=True, groups=2**j).getPotentialEnergy())
+           print(PE)
+           logger.info(PE)
             
         if scf == "openmm": # if using openmm for drude opt, update positions
             positions = simmd.context.getState(getPositions=True).getPositions()
@@ -262,27 +265,71 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
     <np.float> U_coul
         Coulombic interaction energy
     """
-    print(f"\n TESTING U_coul Vectorization")
-    print(f"R_CORE:")
-    print(r_core)
-    print(r_core.shape)
-    #print(f"R_SHELL:")
-    #print(r_shell)
-    #print(r_shell.shape)
-    print("Rij Matrix")
-    print(r_core[:, np.newaxis, :, :])
-    print(r_core[np.newaxis, :, :, :])
-    Rij = r_core[:, np.newaxis, :, :] - r_core[np.newaxis, :, :, :]
-    print(Rij.shape) 
-    print(Rij)
-    dij = r_core - r_shell
-    Dij = dij[:,np.newaxis,:,:]
-    print(Rij - Dij)
-    print(f"Q_CORE:")
-    print(q_core)
-    print(q_core.shape)
-    Qij = q_core*q_core
-    U_coul = 0.0
+    logger.debug(f"U_coul_core = {Ucoul(r_core, q_core, r_shell, q_shell)} kJ/mol\n")
+
+    logger.debug(f"\n TESTING U_coul Vectorization")
+    logger.debug(f"R_CORE:")
+    logger.debug(r_core)
+    logger.debug(r_core.shape)
+    
+    logger.debug("Rij Matrix")
+    Rij = r_core[np.newaxis,:,np.newaxis,:,:] - r_core[:,np.newaxis,:,np.newaxis,:]
+    logger.debug(Rij.shape) 
+    logger.debug(Rij)
+
+    logger.debug("Q_core")
+    logger.debug(q_core)
+    logger.debug(q_core.shape)
+    Qij = q_core[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
+    U_coul_core = Qij/np.linalg.norm(Rij,axis=4)
+    print(U_coul_core.shape)
+    print(U_coul_core)
+    #U_coul_core = np.ma.masked_invalid(U_coul_core).sum()
+    U_diff = np.zeros(U_coul_core.shape) 
+    count = 0
+    U_tot_true = 0.0
+    for i in range(r_core.shape[0]):
+        for j in range(r_core.shape[0]):
+            if i == j:
+                continue
+            for atom_i in range(r_core.shape[1]):
+                for atom_j in range(r_core.shape[1]):
+                    rij = r_core[j][atom_j] - r_core[i][atom_i]
+                    qij = q_core[i][atom_i] * q_core[j][atom_j]
+                    print(f"Atom_{atom_i} (Mol_{i}):Atom{atom_j} (Mol_{j}) --> rij = {rij}")
+                    print(f"Atom_{atom_i} (Mol_{i}):Atom{atom_j} (Mol_{j}) --> qij = {qij}")
+                    diff  =  Rij[i][j][atom_i][atom_j] - rij
+                    diff2 =  Qij[i][j][atom_i][atom_j] - qij
+                    print(f"rij diff = {diff}")
+                    print(f"qij diff = {diff2}")
+                    U_coul_core_true = qij * (1/np.linalg.norm(rij))
+                    U_diff[i][j][atom_i][atom_j] = U_coul_core_true
+                    print(f"U_coul diff = {U_coul_core[i][j][atom_i][atom_j] - U_coul_core_true}")
+                    U_tot_true += U_coul_core_true
+                    count += 1
+    
+    print(count)
+    print(U_coul_core.shape)
+    print(U_coul_core)
+    I = np.eye(U_coul_core.shape[0])
+    print(I)
+    U_coul_core = U_coul_core * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
+    print(U_coul_core.shape)
+    print(U_coul_core)
+    U_coul_core = np.ma.masked_invalid(U_coul_core).sum()
+    print("U_diff:")
+    print(U_diff)
+    print(f"Uvec_coul={U_coul_core} kJ/mol")
+    print(f"Utrue={U_tot_true} kJ/mol")
+
+    #dij = r_core - r_shell
+    #Dij = dij[:,np.newaxis,:,:]
+    #logger.debug(Rij - Dij)
+    #(f"Q_CORE:")
+    #logger.debug(q_core)
+    #logger.debug(q_core.shape)
+    #Qij = q_core*q_core
+    #U_coul = 0.0
     
     return ONE_4PI_EPS0*U_coul 
 
@@ -333,10 +380,10 @@ def Ucoul(r_core, q_core, r_shell, q_shell):
 
                     rij = rj - ri
                     U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
-                    U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
-                                +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
-                                +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
-                    Ucoul_tot += U_coul_core + U_coul_shell
+                    #U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
+                    #            +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
+                    #            +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
+                    Ucoul_tot += U_coul_core # + U_coul_shell
 
     return ONE_4PI_EPS0*Ucoul_tot 
 
@@ -362,9 +409,9 @@ def Uind(r_core, q_core, r_shell, q_shell, d, k):
     U_pol  = Upol(d, k)
     U_coul_vec = Ucoul_vec(r_core, q_core, r_shell, q_shell)
     U_coul = Ucoul(r_core, q_core, r_shell, q_shell)
-    print(f"VECTORIZED U_COUL vs ORIGINAL U_COUL:\n{U_coul - U_coul_vec}")
-    print("=-=-=-=-=-=-=-=-=-=-=-=-Python Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    print(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
+    logger.debug(f"VECTORIZED U_COUL vs ORIGINAL U_COUL:\n{U_coul - U_coul_vec}")
+    logger.debug("=-=-=-=-=-=-=-=-=-=-=-=-Python Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+    logger.debug(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
     return U_pol + U_coul
 
 def opt_d(d0):
@@ -375,33 +422,44 @@ def opt_d(d0):
     """
     return get_displacements(r_core_opt, r_shell_opt)
 
+logger = logging.getLogger(__name__)
 def main(): 
-    
+   
+    global logger 
+    logging.basicConfig(level=logging.DEBUG, format='%(message)s')
+    logger.setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.DEBUG)
+
     set_constants()
     
-    print("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
-                                                pdb="../benchmarks/OpenMM/water/water.pdb",
-                                                ff_xml="../benchmarks/OpenMM/water/water.xml",
-                                                res_xml="../benchmarks/OpenMM/water/water_residue.xml")
-    d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-    U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
-    print(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
-    print(f"Python U_ind = {U_ind:.4f} kJ/mol")
-    print(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
-    print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
+    testWater = True
+    testAcnit = False
+
+    if testWater:
+        logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+                                                    pdb="../benchmarks/OpenMM/water/water.pdb",
+                                                    ff_xml="../benchmarks/OpenMM/water/water.xml",
+                                                    res_xml="../benchmarks/OpenMM/water/water_residue.xml")
+        d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+        U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
+        logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
+        logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
+        logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
+        logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
     
-    #print("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    #r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
-    #                                            pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
-    #                                            ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
-    #                                            res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
-    #d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-    #U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
-    #print(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
-    #print(f"Python U_ind = {U_ind:.4f} kJ/mol")
-    #print(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
-    #print("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+    if testAcnit:
+        logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+                                                    pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
+                                                    ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
+                                                    res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
+        d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+        U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
+        logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
+        logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
+        logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
+        logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
 
 
 
