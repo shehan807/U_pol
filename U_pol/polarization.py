@@ -332,7 +332,7 @@ def Uind(r_core, q_core, r_shell, q_shell, d, k):
     end = time.time()
     forloop_time = end - start
     logger.debug(f"VECTORIZED U_COUL ({U_coul_vec}) vs ORIGINAL U_COUL ({U_coul}):delta\n{U_coul - U_coul_vec}")
-    logger.debug(f"VECTORIZED ({vec_time:0.8f}) sec;\nFOR LOOPS ({forloop_time:0.8f})\n{forloop_time/vec_time:0.2f}x SPEEDUP")
+    logger.debug(f"VECTORIZED ({vec_time:0.8f}) sec;\nFOR LOOPS  ({forloop_time:0.8f}) sec\n{forloop_time/vec_time:0.2f}x SPEEDUP")
     logger.debug("=-=-=-=-=-=-=-=-=-=-=-=-Python Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
     logger.debug(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
     return U_pol + U_coul_vec
@@ -349,7 +349,7 @@ logger = logging.getLogger(__name__)
 def main(): 
    
     global logger 
-    logging.basicConfig(level=logging.DEBUG, format='%(message)s')
+    logging.basicConfig(filename='log.out',level=logging.DEBUG, format='%(message)s')
     logger.setLevel(logging.DEBUG)
     logging.getLogger().setLevel(logging.DEBUG)
 
