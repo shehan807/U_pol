@@ -266,25 +266,49 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
         Coulombic interaction energy
     """
     logger.debug(f"U_coul_core = {Ucoul(r_core, q_core, r_shell, q_shell)} kJ/mol\n")
-
+    
+    # broadcast r_core (nmols, natoms, 3) --> Rij (nmols, nmols, natoms, natoms, 3)
     Rij = r_core[np.newaxis,:,np.newaxis,:,:] - r_core[:,np.newaxis,:,np.newaxis,:]
+    Dij = r_core[np.newaxis,:,np.newaxis,:,:] - r_shell[:,np.newaxis,:,np.newaxis,:]
+    # broadcast q_core (nmols_i, natoms_j) --> Qij (nmols_i, nmols_j, natoms_i, natoms_j)
     Qij  = q_core[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
 
-    Qij_core_shell  = q_shell[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
+    Q_shell = q_shell[np.newaxis,:,np.newaxis,:]
+    Q_core  = q_core[:,np.newaxis,:,np.newaxis]
+    Qij_core_shell  = q_core[np.newaxis,:,np.newaxis,:] * q_shell[:,np.newaxis,:,np.newaxis]
+    Qij_shell_core  =q_shell[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
+    print(f"Q_shell ({Q_shell.shape}): {Q_shell}")
+    print(f"Q_core ({Q_core.shape}): {Q_core}")
+    print(f"Qij_core_shell ({Qij_core_shell.shape}): {Qij_core_shell}")
     Qij_shell_shell = q_shell[np.newaxis,:,np.newaxis,:] * q_shell[:,np.newaxis,:,np.newaxis]
-    U_coul_core = Qij/np.linalg.norm(Rij,axis=4)
-    Di = r_core - r_shell 
-    U_coul_shell_vec = Qij_core_shell / np.linalg.norm(Rij+Di[np.newaxis,:,np.newaxis,:],axis=4)
-    print("di")
-    print(Di.shape)
+    U_coul_core_vec = Qij/np.linalg.norm(Rij,axis=4)
+
+    ########## DEBUGGING HERE ###############
+    shell_mask = np.linalg.norm(r_shell, axis=-1) > 0.0
+    shell_mask2 = np.linalg.norm(r_shell[:,np.newaxis,:,np.newaxis], axis=-1) > 0.0
+    r_core_masked = np.where(shell_mask[...,np.newaxis], r_core, 0.0)
+    print('masking r_core')
+    print('rshell')
+    print(r_shell)
+    print('r_core')
+    print(r_core)
+    print('r_core_masked')
+    print(r_core_masked)
+    print('Di no broadcast')
+    Di_nb = r_core_masked - r_shell
+    Di_nb = np.where(shell_mask[...,np.newaxis], Di_nb, 0.0)
+    print(f"Di_nb ({Di_nb.shape}) {Di_nb}\n")
+    Di = r_core_masked[np.newaxis,:,np.newaxis,:,:] - r_shell[:,np.newaxis,:,np.newaxis,:]
     print(Di)
-    print("q_shell")
-    print(q_shell)
-    print(U_coul_core.shape)
-    print(U_coul_core)
-    #U_coul_core = np.ma.masked_invalid(U_coul_core).sum()
-    U_diff = np.zeros(U_coul_core.shape) 
-    count = 0
+    Di_masked = np.where(shell_mask2[...,np.newaxis], Di, 0.0)
+    print(f"Di_masked ({Di_masked.shape}) {Di_masked}")
+    print(Di_masked)
+    #U_coul_shell_vec = Qij_core_shell / np.linalg.norm(Rij+Di_nb[np.newaxis,:,np.newaxis,:,:],axis=-1)
+    U_coul_shell_vec  = Qij_core_shell / np.linalg.norm(Rij+Di_nb[:,np.newaxis,:,np.newaxis,:],axis=-1) # qi_shell * qj       * (shell_i/np.linalg.norm(rij + di))
+    U_coul_shell_vec1 = Qij_shell_core / np.linalg.norm(Rij-Di_nb[np.newaxis,:,np.newaxis,:,:],axis=-1) # qj_shell * qi       * (shell_j/np.linalg.norm(rij - dj))
+    U_coul_shell_vec2 = Qij_shell_shell / np.linalg.norm(Rij+Di_nb[:,np.newaxis,:,np.newaxis,:]-Di_nb[np.newaxis,:,np.newaxis,:,:],axis=-1) # qi_shell * qj_shell       * (shell_j/np.linalg.norm(rij - dj))
+    
+
     U_tot_true = 0.0
     for i in range(r_core.shape[0]):
         for j in range(r_core.shape[0]):
@@ -295,8 +319,6 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
                 qi_shell = q_shell[i][atom_i]
                 if np.linalg.norm(r_shell[i][atom_i]) > 0.0:
                     di = get_displacements(ri, r_shell[i][atom_i])
-                    print(f"i: d_{i} = {di}")
-                    print(f"Di[{i}][{atom_i}] = {Di[i][atom_i]}")
                     shell_i = 1
                 else:
                     di = 0.0
@@ -310,55 +332,71 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
                     qj_shell = q_shell[j][atom_j]
                     diff  =  Rij[i][j][atom_i][atom_j] - rij
                     diff2 =  Qij[i][j][atom_i][atom_j] - qij
-                    U_coul_core_true = 0.0 # qij * (1/np.linalg.norm(rij))
+                    
+                    ### CHECK FIRST TERM ###
+                    U_coul_core_true = qij * (1/np.linalg.norm(rij))
+                    if (U_coul_core_vec[i][j][atom_i][atom_j] - U_coul_core_true) > 1e-8:
+                        print("ERROR IN FIRST TERM!")
+                        print(f"U_coul_core diff = {U_coul_core_vec[i][j][atom_i][atom_j] - U_coul_core_true}")
                     
                     if np.linalg.norm(r_shell[j][atom_j]) > 0.0:
                         dj = get_displacements(rj, r_shell[j][atom_j])
-                        print(f"j: d_{j} = {dj}")
-                        print(f"Di[{j}][{atom_j}] = {Di[j][atom_j]}")
                         shell_j = 1
                     else:
                         dj = 0.0
                         shell_j = 0
                     
-                    #print(f"disp diff = {di}")
-                    #print(f"disp diff = {dj}")
-                    print(f"qi_shell = {qi_shell};\nqj = {qj};\nQij_core_shell={Qij_core_shell[i][j][atom_i][atom_j]}")
-                    print(f"qi_shell*qj = {qi_shell*qj};\nQij_core_shell={Qij_core_shell[i][j][atom_i][atom_j]}\n")
-                    U_coul_shell = qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
-                    #U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
-                    #            +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
-                    #            +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
+                    #print(f"qi_shell = {qi_shell};\nqj = {qj};\nQij_core_shell={Qij_core_shell[i][j][atom_i][atom_j]}")
+                    #print(f"qi_shell*qj = {qi_shell*qj};\nQij_core_shell={Qij_core_shell[i][j][atom_i][atom_j]}\n")
+                    U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
+                                +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
+                                +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
 
-                    U_diff[i][j][atom_i][atom_j] = U_coul_core_true
+                    ### CHECK SECOND TERM ####
+                    if (U_coul_shell_vec[i][j][atom_i][atom_j] - U_coul_shell) > 1e-5:
+                        print("ERROR IN SECOND TERM!!")
+                        
+                        #print(f"Q_ij[{i}][{j}][{atom_i}][{atom_j}] = {Qij[i][j][atom_i][atom_j]}")
+                        #print(f"qij = {qij}")
+                       
+                        print(f"Qij_core_shell[{i}][{j}][{atom_i}][{atom_j}] = {Qij_core_shell[i][j][atom_i][atom_j]}")
+                        print(f"q{i}_shell*q{j}={qi_shell}*{qj}={qi_shell*qj}")
+                        print(f"Di[{i}][{j}][{atom_i}][{atom_j}] = {Di[i][j][atom_i][atom_j]}")
+                        print(f"Di_nb[{i}][{atom_i}] = {Di_nb[i][atom_i]}")
+                        print(f"Di_masked[{i}][{j}][{atom_i}][{atom_j}] = {Di_masked[i][j][atom_i][atom_j]}")
+                        print(f"d_{i} = {di}")
+
+                        #print(f"Q_shell_i[{i}][{atom_i}] = {Q_shell[0][i][0][atom_i]}")
+                        #print(f"qi_shell = {qi_shell}")
+                        #print(f"Q_core_j[{j}][{atom_j}] = {Q_core[j][0][atom_j][0]}")
+                        #print(f"qj = {qj}")
+                    print(U_coul_shell_vec[i][j][atom_i][atom_j])
+                    print(U_coul_shell)
                     print(f"U_coul diff = {U_coul_shell_vec[i][j][atom_i][atom_j] - U_coul_shell}")
-                    U_tot_true += U_coul_core_true + U_coul_shell
-                    count += 1
+                    U_tot_true += U_coul_shell + U_coul_core_true
     
-    print(count)
-    print(U_coul_core.shape)
-    print(U_coul_core)
-    I = np.eye(U_coul_core.shape[0])
-    print(I)
-    U_coul_core = U_coul_core * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
-    print(U_coul_core.shape)
-    print(U_coul_core)
+    I = np.eye(U_coul_core_vec.shape[0])
+    U_coul_core = U_coul_core_vec * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
     U_coul_core = np.ma.masked_invalid(U_coul_core).sum()
-    print("U_diff:")
-    print(U_diff)
-    print(f"Uvec_coul={U_coul_core} kJ/mol")
+    
+    I = np.eye(U_coul_shell_vec.shape[0])
+    U_coul_shell0 = U_coul_shell_vec * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
+    U_coul_shell0 = np.ma.masked_invalid(U_coul_shell0).sum()
+    
+    I = np.eye(U_coul_shell_vec1.shape[0])
+    U_coul_shell1 = U_coul_shell_vec1 * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
+    U_coul_shell1 = np.ma.masked_invalid(U_coul_shell1).sum()
+    
+    I = np.eye(U_coul_shell_vec2.shape[0])
+    U_coul_shell2 = U_coul_shell_vec2 * (1 - I[:,:,np.newaxis,np.newaxis])#remove diagonal (i.e., intramolecular) terms
+    U_coul_shell2 = np.ma.masked_invalid(U_coul_shell2).sum()
+
+    print(f"Uvec_coul={U_coul_core + U_coul_shell0 + U_coul_shell1 + U_coul_shell2} kJ/mol")
     print(f"Utrue={U_tot_true} kJ/mol")
 
-    #dij = r_core - r_shell
-    #Dij = dij[:,np.newaxis,:,:]
-    #logger.debug(Rij - Dij)
-    #(f"Q_CORE:")
-    #logger.debug(q_core)
-    #logger.debug(q_core.shape)
-    #Qij = q_core*q_core
-    U_coul = 0.0
+    U_coul = U_coul_core + U_coul_shell0 + U_coul_shell1 + U_coul_shell2
     
-    return ONE_4PI_EPS0*U_coul 
+    return ONE_4PI_EPS0*0.5*U_coul 
 
 def Ucoul(r_core, q_core, r_shell, q_shell):
     """
@@ -407,10 +445,10 @@ def Ucoul(r_core, q_core, r_shell, q_shell):
 
                     rij = rj - ri
                     U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
-                    #U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
-                    #            +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
-                    #            +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
-                    Ucoul_tot += U_coul_core # + U_coul_shell
+                    U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
+                                +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
+                                +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
+                    Ucoul_tot += U_coul_core  + U_coul_shell
 
     return ONE_4PI_EPS0*Ucoul_tot 
 
@@ -436,10 +474,10 @@ def Uind(r_core, q_core, r_shell, q_shell, d, k):
     U_pol  = Upol(d, k)
     U_coul_vec = Ucoul_vec(r_core, q_core, r_shell, q_shell)
     U_coul = Ucoul(r_core, q_core, r_shell, q_shell)
-    logger.debug(f"VECTORIZED U_COUL vs ORIGINAL U_COUL:\n{U_coul - U_coul_vec}")
+    logger.debug(f"VECTORIZED U_COUL ({0.5*U_coul_vec}) vs ORIGINAL U_COUL ({U_coul}):\n{U_coul - U_coul_vec}")
     logger.debug("=-=-=-=-=-=-=-=-=-=-=-=-Python Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
     logger.debug(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
-    return U_pol + U_coul
+    return U_pol + U_coul_vec
 
 def opt_d(d0):
     """
@@ -460,7 +498,7 @@ def main():
     set_constants()
     
     testWater = True
-    testAcnit = False
+    testAcnit = True
 
     if testWater:
         logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
