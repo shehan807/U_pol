@@ -267,21 +267,19 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
     """
     logger.debug(f"U_coul_core = {Ucoul(r_core, q_core, r_shell, q_shell)} kJ/mol\n")
 
-    logger.debug(f"\n TESTING U_coul Vectorization")
-    logger.debug(f"R_CORE:")
-    logger.debug(r_core)
-    logger.debug(r_core.shape)
-    
-    logger.debug("Rij Matrix")
     Rij = r_core[np.newaxis,:,np.newaxis,:,:] - r_core[:,np.newaxis,:,np.newaxis,:]
-    logger.debug(Rij.shape) 
-    logger.debug(Rij)
+    Qij  = q_core[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
 
-    logger.debug("Q_core")
-    logger.debug(q_core)
-    logger.debug(q_core.shape)
-    Qij = q_core[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
+    Qij_core_shell  = q_shell[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
+    Qij_shell_shell = q_shell[np.newaxis,:,np.newaxis,:] * q_shell[:,np.newaxis,:,np.newaxis]
     U_coul_core = Qij/np.linalg.norm(Rij,axis=4)
+    Di = r_core - r_shell 
+    U_coul_shell_vec = Qij_core_shell / np.linalg.norm(Rij+Di[np.newaxis,:,np.newaxis,:],axis=4)
+    print("di")
+    print(Di.shape)
+    print(Di)
+    print("q_shell")
+    print(q_shell)
     print(U_coul_core.shape)
     print(U_coul_core)
     #U_coul_core = np.ma.masked_invalid(U_coul_core).sum()
@@ -293,19 +291,48 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
             if i == j:
                 continue
             for atom_i in range(r_core.shape[1]):
+                ri = r_core[i][atom_i]
+                qi_shell = q_shell[i][atom_i]
+                if np.linalg.norm(r_shell[i][atom_i]) > 0.0:
+                    di = get_displacements(ri, r_shell[i][atom_i])
+                    print(f"i: d_{i} = {di}")
+                    print(f"Di[{i}][{atom_i}] = {Di[i][atom_i]}")
+                    shell_i = 1
+                else:
+                    di = 0.0
+                    shell_i = 0
                 for atom_j in range(r_core.shape[1]):
-                    rij = r_core[j][atom_j] - r_core[i][atom_i]
-                    qij = q_core[i][atom_i] * q_core[j][atom_j]
-                    print(f"Atom_{atom_i} (Mol_{i}):Atom{atom_j} (Mol_{j}) --> rij = {rij}")
-                    print(f"Atom_{atom_i} (Mol_{i}):Atom{atom_j} (Mol_{j}) --> qij = {qij}")
+                    rj = r_core[j][atom_j] 
+                    rij = rj - ri
+                    qi = q_core[i][atom_i]
+                    qj = q_core[j][atom_j]
+                    qij = qi * qj
+                    qj_shell = q_shell[j][atom_j]
                     diff  =  Rij[i][j][atom_i][atom_j] - rij
                     diff2 =  Qij[i][j][atom_i][atom_j] - qij
-                    print(f"rij diff = {diff}")
-                    print(f"qij diff = {diff2}")
-                    U_coul_core_true = qij * (1/np.linalg.norm(rij))
+                    U_coul_core_true = 0.0 # qij * (1/np.linalg.norm(rij))
+                    
+                    if np.linalg.norm(r_shell[j][atom_j]) > 0.0:
+                        dj = get_displacements(rj, r_shell[j][atom_j])
+                        print(f"j: d_{j} = {dj}")
+                        print(f"Di[{j}][{atom_j}] = {Di[j][atom_j]}")
+                        shell_j = 1
+                    else:
+                        dj = 0.0
+                        shell_j = 0
+                    
+                    #print(f"disp diff = {di}")
+                    #print(f"disp diff = {dj}")
+                    print(f"qi_shell = {qi_shell};\nqj = {qj};\nQij_core_shell={Qij_core_shell[i][j][atom_i][atom_j]}")
+                    print(f"qi_shell*qj = {qi_shell*qj};\nQij_core_shell={Qij_core_shell[i][j][atom_i][atom_j]}\n")
+                    U_coul_shell = qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
+                    #U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
+                    #            +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
+                    #            +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
+
                     U_diff[i][j][atom_i][atom_j] = U_coul_core_true
-                    print(f"U_coul diff = {U_coul_core[i][j][atom_i][atom_j] - U_coul_core_true}")
-                    U_tot_true += U_coul_core_true
+                    print(f"U_coul diff = {U_coul_shell_vec[i][j][atom_i][atom_j] - U_coul_shell}")
+                    U_tot_true += U_coul_core_true + U_coul_shell
                     count += 1
     
     print(count)
@@ -329,7 +356,7 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
     #logger.debug(q_core)
     #logger.debug(q_core.shape)
     #Qij = q_core*q_core
-    #U_coul = 0.0
+    U_coul = 0.0
     
     return ONE_4PI_EPS0*U_coul 
 
