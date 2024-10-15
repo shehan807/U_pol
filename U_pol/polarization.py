@@ -280,16 +280,22 @@ def opt_d(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
 
     """
     Uind_min = lambda d: Uind(r_core, q_core, q_shell, d, k)
-
+    diff = 1e10
+    best_method = None
     for method in methods:
         start = time.time()
-        res = minimize(Uind_min, d0, method=method,options={'xatol':1e-10,'disp':True})
+        res = minimize(Uind_min, d0, method=method,options={'xatol':1e-12,'disp':True})
         end = time.time()
         d_opt = res.x.reshape(r_core.shape)
         print(f"Method {method} took {end-start:.4f} sec.\nOptimized d:\n{d_opt}")
         if d_ref.any():
+            if np.linalg.norm(d_ref-d_opt) < diff:
+                diff = np.linalg.norm(d_ref-d_opt)
+                d_opt_final = d_opt
+                best_method = method
             print(f"Norm Diff : {np.linalg.norm(d_ref-d_opt)}.")
-    return d_opt
+    print(f"Best Method : {best_method}")
+    return d_opt_final
 
 logger = logging.getLogger(__name__)
 def main(): 
@@ -311,15 +317,14 @@ def main():
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         d_ref = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        print(f"Optimized displacements:\n{d_ref}")
         
         r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf=None,
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         d0 = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        print(f"Un-optimized displacements:\n{d0}")
-        d = opt_d(r_core, q_core, q_shell, d0.flatten(), k, d_ref=d_ref)
+        
+        d = opt_d(r_core, q_core, q_shell, d0.flatten(), k, methods=["BFGS","L-BFGS-B","TNC","SLSQP","Nelder-Mead","CG","Powell"],d_ref=d_ref)
         U_ind = Uind(r_core, q_core, q_shell, d, k)
         logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
@@ -328,11 +333,17 @@ def main():
     
     if testAcnit:
         logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+                                                    pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
+                                                    ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
+                                                    res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
+        d_ref = get_displacements(r_core, r_shell) # get initial core/shell displacements 
         r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf=None,
                                                     pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
                                                     ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
                                                     res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
-        d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+        d0 = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+        d = opt_d(r_core, q_core, q_shell, d0.flatten(), k, methods=["BFGS","L-BFGS-B","TNC","SLSQP","Nelder-Mead","CG","Powell"],d_ref=d_ref)
         U_ind = Uind(r_core, q_core, q_shell, d, k)
         logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
