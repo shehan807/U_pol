@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 # Import standard Python modules 
+import time
 import os, sys
 sys.path.append('.')
 from util import *
@@ -10,7 +11,7 @@ from simtk.unit import *
 import numpy as np
 from scipy.optimize import minimize
 import logging
-import time
+import jax.numpy as jnp
 
 def set_constants():
     global ONE_4PI_EPS0 
@@ -201,7 +202,7 @@ def Upol(d, k):
     d_mag = np.linalg.norm(d, axis=2)
     return 0.5 * np.sum(k * d_mag**2)
 
-def Ucoul(r_core, q_core, r_shell, q_shell, Dij):
+def Ucoul(r_core, q_core, q_shell, Dij):
     """
     calculates total coulomb interaction energy, 
     U_coul = ...
@@ -248,7 +249,7 @@ def Ucoul(r_core, q_core, r_shell, q_shell, Dij):
     
     return ONE_4PI_EPS0*U_coul
 
-def Uind(r_core, q_core, r_shell, q_shell, d, k):
+def Uind(r_core, q_core, q_shell, d, k):
     """
     calculates total induction energy, 
     U_ind = Upol + Uuu + Ustat.
@@ -267,23 +268,34 @@ def Uind(r_core, q_core, r_shell, q_shell, d, k):
     <np.float> Uind
         induction energy
     """
+    d = d.reshape(r_core.shape)
     U_pol  = Upol(d, k)
-    U_coul = Ucoul(r_core, q_core, r_shell, q_shell, d)
+    U_coul = Ucoul(r_core, q_core, q_shell, d)
     return U_pol + U_coul
 
-def opt_d(d0):
+def opt_d(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
     """
     TODO: Iteratively determine core/shell displacements, d, by minimizing 
     Uind w.r.t d. 
 
     """
-    return get_displacements(r_core_opt, r_shell_opt)
+    Uind_min = lambda d: Uind(r_core, q_core, q_shell, d, k)
+
+    for method in methods:
+        start = time.time()
+        res = minimize(Uind_min, d0, method=method,options={'xatol':1e-10,'disp':True})
+        end = time.time()
+        d_opt = res.x.reshape(r_core.shape)
+        print(f"Method {method} took {end-start:.4f} sec.\nOptimized d:\n{d_opt}")
+        if d_ref.any():
+            print(f"Norm Diff : {np.linalg.norm(d_ref-d_opt)}.")
+    return d_opt
 
 logger = logging.getLogger(__name__)
 def main(): 
    
     global logger 
-    logging.basicConfig(filename='log.out',level=logging.WARN, format='%(message)s')
+    logging.basicConfig(filename='log.out',level=logging.INFO, format='%(message)s')
     # logger.setLevel(logging.DEBUG)
     # logging.getLogger().setLevel(logging.DEBUG)
 
@@ -298,8 +310,17 @@ def main():
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
-        d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
+        d_ref = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+        print(f"Optimized displacements:\n{d_ref}")
+        
+        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf=None,
+                                                    pdb="../benchmarks/OpenMM/water/water.pdb",
+                                                    ff_xml="../benchmarks/OpenMM/water/water.xml",
+                                                    res_xml="../benchmarks/OpenMM/water/water_residue.xml")
+        d0 = get_displacements(r_core, r_shell) # get initial core/shell displacements 
+        print(f"Un-optimized displacements:\n{d0}")
+        d = opt_d(r_core, q_core, q_shell, d0.flatten(), k, d_ref=d_ref)
+        U_ind = Uind(r_core, q_core, q_shell, d, k)
         logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
         logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
@@ -307,12 +328,12 @@ def main():
     
     if testAcnit:
         logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf=None,
                                                     pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
                                                     ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
                                                     res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
         d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
+        U_ind = Uind(r_core, q_core, q_shell, d, k)
         logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
         logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
