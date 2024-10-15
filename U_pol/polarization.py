@@ -12,6 +12,8 @@ import numpy as np
 from scipy.optimize import minimize
 import logging
 import jax.numpy as jnp
+from jax.scipy.optimize import minimize as jax_minimize
+from jax import jit
 
 def set_constants():
     global ONE_4PI_EPS0 
@@ -140,12 +142,13 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
         # set_drudes(...)
         # position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
         
-    r_core = np.array(r_core)
-    r_shell = np.array(r_shell)
-    q_core = np.array(q_core)
-    q_shell = np.array(q_shell)
-    alphas = np.array(alphas)
-    k = np.divide(ONE_4PI_EPS0*(q_shell)**2, alphas, where=alphas != 0, out=np.zeros_like(alphas))
+    r_core  = jnp.array(r_core)
+    r_shell = jnp.array(r_shell)
+    q_core  = jnp.array(q_core)
+    q_shell = jnp.array(q_shell)
+    alphas  = jnp.array(alphas)
+    # k = jnp.true_divide(ONE_4PI_EPS0*(q_shell)**2, alphas, where=alphas != 0, out=jnp.zeros_like(alphas))
+    k = jnp.where(alphas != 0, jnp.divide(ONE_4PI_EPS0 * (q_shell)**2, alphas), jnp.zeros_like(alphas))
     return r_core, q_core, r_shell, q_shell, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
 
 
@@ -179,11 +182,12 @@ def get_displacements(r_core, r_shell):
     <np.array> d
         array of displacements for every core/shell pair
     """
-    shell_mask = np.linalg.norm(r_shell, axis=-1) > 0.0
+    shell_mask = jnp.linalg.norm(r_shell, axis=-1) > 0.0
     d = r_core - r_shell
-    d = np.where(shell_mask[...,np.newaxis], d, 0.0)
+    d = jnp.where(shell_mask[...,jnp.newaxis], d, 0.0)
     return d
 
+# @jit
 def Upol(d, k):
     """
     Calculates polarization energy, 
@@ -199,9 +203,10 @@ def Upol(d, k):
     <np.float> Upol
         polarization energy
     """
-    d_mag = np.linalg.norm(d, axis=2)
-    return 0.5 * np.sum(k * d_mag**2)
+    d_mag = jnp.linalg.norm(d, axis=2)
+    return 0.5 * jnp.sum(k * d_mag**2)
 
+# @jit
 def Ucoul(r_core, q_core, q_shell, Dij):
     """
     calculates total coulomb interaction energy, 
@@ -221,34 +226,36 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     """
     
     # broadcast r_core (nmols, natoms, 3) --> Rij (nmols, nmols, natoms, natoms, 3)
-    Rij = r_core[np.newaxis,:,np.newaxis,:,:] - r_core[:,np.newaxis,:,np.newaxis,:]
+    Rij = r_core[jnp.newaxis,:,jnp.newaxis,:,:] - r_core[:,jnp.newaxis,:,jnp.newaxis,:]
     
     # broadcast q_core (nmols_i, natoms_j) --> Qij (nmols_i, nmols_j, natoms_i, natoms_j)
-    Qij  = q_core[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
+    Qij  = q_core[jnp.newaxis,:,jnp.newaxis,:] * q_core[:,jnp.newaxis,:,jnp.newaxis]
     
     # create Di and Dj matrices (account for nonzero values that are not true displacements)
-    Di = Dij[:,np.newaxis,:,np.newaxis,:]
-    Dj = Dij[np.newaxis,:,np.newaxis,:,:]
+    Di = Dij[:,jnp.newaxis,:,jnp.newaxis,:]
+    Dj = Dij[jnp.newaxis,:,jnp.newaxis,:,:]
 
     # break up core-shell, shell-core, and shell-shell terms
-    Qi_shell = q_shell[:,np.newaxis,:,np.newaxis]
-    Qj_shell = q_shell[np.newaxis,:,np.newaxis,:]
-    Qi_core  = q_core[:,np.newaxis,:,np.newaxis]
-    Qj_core  = q_core[np.newaxis,:,np.newaxis,:]
+    Qi_shell = q_shell[:,jnp.newaxis,:,jnp.newaxis]
+    Qj_shell = q_shell[jnp.newaxis,:,jnp.newaxis,:]
+    Qi_core  = q_core[:,jnp.newaxis,:,jnp.newaxis]
+    Qj_core  = q_core[jnp.newaxis,:,jnp.newaxis,:]
     
-    U_coul =       Qi_core  * Qj_core  / np.linalg.norm(Rij,axis=-1)\
-                 + Qi_shell * Qj_core  / np.linalg.norm(Rij + Di,axis=-1)\
-                 + Qi_core  * Qj_shell / np.linalg.norm(Rij - Dj,axis=-1)\
-                 + Qi_shell * Qj_shell / np.linalg.norm(Rij + Di - Dj,axis=-1)       
+    U_coul =       Qi_core  * Qj_core  / jnp.linalg.norm(Rij,axis=-1)\
+                 + Qi_shell * Qj_core  / jnp.linalg.norm(Rij + Di,axis=-1)\
+                 + Qi_core  * Qj_shell / jnp.linalg.norm(Rij - Dj,axis=-1)\
+                 + Qi_shell * Qj_shell / jnp.linalg.norm(Rij + Di - Dj,axis=-1)       
 
     # remove diagonal (intramolecular) components 
-    I = np.eye(U_coul.shape[0])
-    U_coul = U_coul * (1 - I[:,:,np.newaxis,np.newaxis])
+    I = jnp.eye(U_coul.shape[0])
+    U_coul = U_coul * (1 - I[:,:,jnp.newaxis,jnp.newaxis])
     
-    U_coul = 0.5 * np.ma.masked_invalid(U_coul).sum()
+    # U_coul = 0.5 * jnp.ma.masked_invalid(U_coul).sum() # doesn't work in jax
+    U_coul = 0.5 * jnp.where(jnp.isfinite(U_coul), U_coul, 0).sum() # might work in jax
     
     return ONE_4PI_EPS0*U_coul
 
+# @jit
 def Uind(r_core, q_core, q_shell, d, k):
     """
     calculates total induction energy, 
@@ -268,7 +275,8 @@ def Uind(r_core, q_core, q_shell, d, k):
     <np.float> Uind
         induction energy
     """
-    d = d.reshape(r_core.shape)
+    d = d.reshape(r_core.shape) # specifically to resolve scipy.optimize handling of 1D arrays
+    # print(d)
     U_pol  = Upol(d, k)
     U_coul = Ucoul(r_core, q_core, q_shell, d)
     return U_pol + U_coul
@@ -297,6 +305,26 @@ def opt_d(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
     print(f"Best Method : {best_method}")
     return d_opt_final
 
+def opt_d_jax(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
+    """
+    TODO: Iteratively determine core/shell displacements, d, by minimizing 
+    Uind w.r.t d. 
+
+    """
+    Uind_min = lambda d: Uind(r_core, q_core, q_shell, d, k)
+    
+    best_method = None
+    for method in methods:
+        start = time.time()
+        res = jax_minimize(Uind_min, d0, method=method)
+        end = time.time()
+        d_opt = res.x.reshape(r_core.shape)
+        print(f"Method {method} took {end-start:.4f} sec.\nOptimized d:\n{d_opt}")
+        if d_ref.any():
+            diff = jnp.linalg.norm(d_ref-d_opt)
+            print(f"Norm Diff : {jnp.linalg.norm(d_ref-d_opt)}.")
+    return d_opt
+
 logger = logging.getLogger(__name__)
 def main(): 
    
@@ -308,7 +336,7 @@ def main():
     set_constants()
 
     testWater = True
-    testAcnit = True
+    testAcnit = False
 
     if testWater:
         logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
@@ -323,8 +351,8 @@ def main():
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         d0 = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        
-        d = opt_d(r_core, q_core, q_shell, d0.flatten(), k, methods=["BFGS","L-BFGS-B","TNC","SLSQP","Nelder-Mead","CG","Powell"],d_ref=d_ref)
+        print(d0)
+        d = opt_d_jax(r_core, q_core, q_shell, d0.flatten(), k, methods=["BFGS"],d_ref=d_ref)
         U_ind = Uind(r_core, q_core, q_shell, d, k)
         logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
