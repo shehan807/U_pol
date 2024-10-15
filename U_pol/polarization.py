@@ -84,7 +84,6 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
         for j in range(system.getNumForces()):
            f = system.getForce(j)
            PE = str(type(f)) + str(simmd.context.getState(getEnergy=True, groups=2**j).getPotentialEnergy())
-           print(PE)
            logger.info(PE)
             
         if scf == "openmm": # if using openmm for drude opt, update positions
@@ -179,7 +178,10 @@ def get_displacements(r_core, r_shell):
     <np.array> d
         array of displacements for every core/shell pair
     """
-    return r_core - r_shell
+    shell_mask = np.linalg.norm(r_shell, axis=-1) > 0.0
+    d = r_core - r_shell
+    d = np.where(shell_mask[...,np.newaxis], d, 0.0)
+    return d
 
 def Upol(d, k):
     """
@@ -199,7 +201,7 @@ def Upol(d, k):
     d_mag = np.linalg.norm(d, axis=2)
     return 0.5 * np.sum(k * d_mag**2)
 
-def Ucoul_vec(r_core, q_core, r_shell, q_shell):
+def Ucoul(r_core, q_core, r_shell, q_shell, Dij):
     """
     calculates total coulomb interaction energy, 
     U_coul = ...
@@ -224,10 +226,6 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
     Qij  = q_core[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
     
     # create Di and Dj matrices (account for nonzero values that are not true displacements)
-    shell_mask = np.linalg.norm(r_shell, axis=-1) > 0.0
-    Dij = r_core - r_shell
-    Dij = np.where(shell_mask[...,np.newaxis], Dij, 0.0)
-    Di_nb = Dij
     Di = Dij[:,np.newaxis,:,np.newaxis,:]
     Dj = Dij[np.newaxis,:,np.newaxis,:,:]
 
@@ -242,66 +240,13 @@ def Ucoul_vec(r_core, q_core, r_shell, q_shell):
                  + Qi_core  * Qj_shell / np.linalg.norm(Rij - Dj,axis=-1)\
                  + Qi_shell * Qj_shell / np.linalg.norm(Rij + Di - Dj,axis=-1)       
 
-    # exclude double counting
+    # remove diagonal (intramolecular) components 
     I = np.eye(U_coul.shape[0])
     U_coul = U_coul * (1 - I[:,:,np.newaxis,np.newaxis])
-    U_coul = np.ma.masked_invalid(U_coul).sum()
     
-    return ONE_4PI_EPS0*0.5*U_coul 
-
-def Ucoul(r_core, q_core, r_shell, q_shell):
-    """
-    calculates total coulomb interaction energy, 
-    U_coul = ...
-
-    Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np.array> d
-        array of displacements between core and shell sites
-
-    Returns:
-    <np.float> U_coul
-        Coulombic interaction energy
-    """
-    Ucoul_tot = 0.0
-    nmols = r_core.shape[0]
-    natoms = r_core.shape[1]
-    shell_i = False
-    shell_j = False
-    for i in range(nmols):
-        for j in range(i+1, nmols):
-            for core_i in range(natoms):
-                ri = r_core[i][core_i]
-                qi = q_core[i][core_i]
-                qi_shell = q_shell[i][core_i]
-                if np.linalg.norm(r_shell[i][core_i]) > 0.0:
-                    di = get_displacements(ri, r_shell[i][core_i])
-                    shell_i = 1
-                else:
-                    di = 0.0
-                    shell_i = 0
-                for core_j in range(natoms):
-                    rj = r_core[j][core_j]
-                    qj = q_core[j][core_j]
-                    qj_shell = q_shell[j][core_j]
-                    if np.linalg.norm(r_shell[j][core_j]) > 0.0:
-                        dj = get_displacements(rj, r_shell[j][core_j])
-                        shell_j = 1
-                    else:
-                        dj = 0.0
-                        shell_j = 0
-
-                    rij = rj - ri
-                    U_coul_core  = qi * qj * (1/np.linalg.norm(rij))
-                    U_coul_shell = qi_shell * qj_shell * (shell_i*shell_j/np.linalg.norm(rij - dj + di))\
-                                +  qi       * qj_shell * (shell_j/np.linalg.norm(rij - dj))\
-                                +  qi_shell * qj       * (shell_i/np.linalg.norm(rij + di)) 
-                    Ucoul_tot += U_coul_core  + U_coul_shell
-
-    return ONE_4PI_EPS0*Ucoul_tot 
+    U_coul = 0.5 * np.ma.masked_invalid(U_coul).sum()
+    
+    return ONE_4PI_EPS0*U_coul
 
 def Uind(r_core, q_core, r_shell, q_shell, d, k):
     """
@@ -323,19 +268,8 @@ def Uind(r_core, q_core, r_shell, q_shell, d, k):
         induction energy
     """
     U_pol  = Upol(d, k)
-    start = time.time()
-    U_coul_vec = Ucoul_vec(r_core, q_core, r_shell, q_shell)
-    end = time.time()
-    vec_time = end-start
-    start = time.time()
-    U_coul = Ucoul(r_core, q_core, r_shell, q_shell)
-    end = time.time()
-    forloop_time = end - start
-    logger.debug(f"VECTORIZED U_COUL ({U_coul_vec}) vs ORIGINAL U_COUL ({U_coul}):delta\n{U_coul - U_coul_vec}")
-    logger.debug(f"VECTORIZED ({vec_time:0.8f}) sec;\nFOR LOOPS ({forloop_time:0.8f})\n{forloop_time/vec_time:0.2f}x SPEEDUP")
-    logger.debug("=-=-=-=-=-=-=-=-=-=-=-=-Python Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    logger.debug(f"Upol={U_pol} kJ/mol\nU_coul={U_coul} kJ/mol\n")
-    return U_pol + U_coul_vec
+    U_coul = Ucoul(r_core, q_core, r_shell, q_shell, d)
+    return U_pol + U_coul
 
 def opt_d(d0):
     """
@@ -349,9 +283,9 @@ logger = logging.getLogger(__name__)
 def main(): 
    
     global logger 
-    logging.basicConfig(level=logging.DEBUG, format='%(message)s')
-    logger.setLevel(logging.DEBUG)
-    logging.getLogger().setLevel(logging.DEBUG)
+    logging.basicConfig(filename='log.out',level=logging.WARN, format='%(message)s')
+    # logger.setLevel(logging.DEBUG)
+    # logging.getLogger().setLevel(logging.DEBUG)
 
     set_constants()
 
