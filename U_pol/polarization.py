@@ -14,6 +14,7 @@ import logging
 import jax.numpy as jnp
 from jax.scipy.optimize import minimize as jax_minimize
 from jax import jit
+import jax 
 
 def set_constants():
     global ONE_4PI_EPS0 
@@ -83,7 +84,7 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
         state = simmd.context.getState(getEnergy=True,getForces=True,getVelocities=True,getPositions=True)
         Uind_openmm = state.getPotentialEnergy() 
         logger.info("=-=-=-=-=-=-=-=-=-=-=-=-OpenMM Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        logger.info("total Energy" + str(Uind_openmm))
+        logger.info("total Energy = " + str(Uind_openmm))
         for j in range(system.getNumForces()):
            f = system.getForce(j)
            PE = str(type(f)) + str(simmd.context.getState(getEnergy=True, groups=2**j).getPotentialEnergy())
@@ -147,8 +148,13 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
     q_core  = jnp.array(q_core)
     q_shell = jnp.array(q_shell)
     alphas  = jnp.array(alphas)
+    
+    # note that 
     # k = jnp.true_divide(ONE_4PI_EPS0*(q_shell)**2, alphas, where=alphas != 0, out=jnp.zeros_like(alphas))
-    k = jnp.where(alphas != 0, jnp.divide(ONE_4PI_EPS0 * (q_shell)**2, alphas), jnp.zeros_like(alphas))
+    
+    eps = 1e-15
+    k = jnp.divide(ONE_4PI_EPS0 * q_shell**2, alphas + eps)
+    # k = jnp.where(alphas != 0, jnp.divide(ONE_4PI_EPS0 * (q_shell)**2, alphas), jnp.zeros_like(alphas))
     return r_core, q_core, r_shell, q_shell, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
 
 
@@ -203,7 +209,15 @@ def Upol(d, k):
     <np.float> Upol
         polarization energy
     """
-    d_mag = jnp.linalg.norm(d, axis=2)
+    print('k in Upol')
+    print(k)
+    print('d in Upol')
+    print(d)
+    #print('d**0.5')
+    #print(d**0.5)
+    print('d_mag calculation')
+    d_mag = d_mag = jnp.sqrt(jnp.sum(jnp.square(d) + 1e-8, axis=2)) # jnp.linalg.norm(d, axis=2)
+    print(d_mag)
     return 0.5 * jnp.sum(k * d_mag**2)
 
 # @jit
@@ -224,7 +238,10 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     <np.float> U_coul
         Coulombic interaction energy
     """
-    
+    # in jax, true_divide propogates nan values differently than numpy
+    # a small epsilon (temporarily) fixes division errors 
+    eps = 1e-15
+
     # broadcast r_core (nmols, natoms, 3) --> Rij (nmols, nmols, natoms, natoms, 3)
     Rij = r_core[jnp.newaxis,:,jnp.newaxis,:,:] - r_core[:,jnp.newaxis,:,jnp.newaxis,:]
     
@@ -241,10 +258,10 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     Qi_core  = q_core[:,jnp.newaxis,:,jnp.newaxis]
     Qj_core  = q_core[jnp.newaxis,:,jnp.newaxis,:]
     
-    U_coul =       Qi_core  * Qj_core  / jnp.linalg.norm(Rij,axis=-1)\
-                 + Qi_shell * Qj_core  / jnp.linalg.norm(Rij + Di,axis=-1)\
-                 + Qi_core  * Qj_shell / jnp.linalg.norm(Rij - Dj,axis=-1)\
-                 + Qi_shell * Qj_shell / jnp.linalg.norm(Rij + Di - Dj,axis=-1)       
+    U_coul =       Qi_core  * Qj_core  / jnp.linalg.norm(Rij+eps,axis=-1)\
+                 + Qi_shell * Qj_core  / jnp.linalg.norm(Rij + Di+eps,axis=-1)\
+                 + Qi_core  * Qj_shell / jnp.linalg.norm(Rij - Dj+eps,axis=-1)\
+                 + Qi_shell * Qj_shell / jnp.linalg.norm(Rij + Di - Dj+eps,axis=-1)       
 
     # remove diagonal (intramolecular) components 
     I = jnp.eye(U_coul.shape[0])
@@ -276,7 +293,6 @@ def Uind(r_core, q_core, q_shell, d, k):
         induction energy
     """
     d = d.reshape(r_core.shape) # specifically to resolve scipy.optimize handling of 1D arrays
-    # print(d)
     U_pol  = Upol(d, k)
     U_coul = Ucoul(r_core, q_core, q_shell, d)
     return U_pol + U_coul
@@ -327,7 +343,8 @@ def opt_d_jax(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
 
 logger = logging.getLogger(__name__)
 def main(): 
-   
+
+    jax.config.update("jax_debug_nans", True) 
     global logger 
     logging.basicConfig(filename='log.out',level=logging.INFO, format='%(message)s')
     # logger.setLevel(logging.DEBUG)
