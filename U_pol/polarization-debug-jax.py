@@ -176,7 +176,7 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
 
 
 # @jit
-def get_k(q_shell, alphas, eps=1e-16):
+def get_k(q_shell, alphas, eps=1e-20):
     return jnp.divide(ONE_4PI_EPS0 * q_shell**2, alphas + eps)
 
 def set_drudes(r_core, weights=None):
@@ -275,7 +275,7 @@ def Upol(d, k):
     jnp_d_mag_where = jnp.linalg.norm(jnp.where(d > 0., d, 1.), axis=2)
     print(f"jnp (+resolved where issue?) d_mag = {jnp_d_mag_where}")
 
-    return 0.5 * jnp.sum(k * d_mag_2**2)
+    return 0.5 * jnp.sum(k * d_mag_0**2)
 
 def Ucoul_np(r_core, q_core, q_shell, Dij):
     """
@@ -392,10 +392,10 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     print(f"Qi_shell*Qj_core = {Qi_shell*Qj_core}")
 
 
-    #Rij_norm = jnp.linalg.norm(Rij, axis=-1)
-    #y = jnp.where(Rij_norm == 0.0, 1.0, Rij_norm)
+    Rij_norm = jnp.linalg.norm(Rij, axis=-1)
+    y = jnp.where(Rij_norm == 0.0, 1.0, Rij_norm)
     #term1 = jnp.where(Rij_norm == 0.0, 0.0, Qi_core * Qj_core / y)
-    ## term1 = jnp.where(jnp.linalg.norm(Rij, axis=-1) == 0.0, 0.0, Qi_core * Qj_core / jnp.linalg.norm(Rij, axis=-1))
+    term1 = jnp.where(jnp.linalg.norm(Rij, axis=-1) == 0.0, 0.0, (Qi_core * Qj_core) / y)
     #print(f"term1 = {term1}")
 
     # term2 = jnp.where(jnp.linalg.norm(Rij+Di, axis=-1) == 0.0, 0.0, Qi_shell * Qj_core / Rij_y)
@@ -427,17 +427,25 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     print(f"Rij_Di.type = {type(Rij_Di)}")
     print(f"Rij_Di.shape = {Rij_Di.shape}")
     print(f"Rij_Di.shape = {Rij_Di.shape}")
-    Rij_norm2 = jnp.linalg.norm(Rij_Di, axis=-1)
+    Rij_norm2 = jnp.linalg.norm(Rij+Di, axis=-1)
     y2 = jnp.where(Rij_norm2 == 0.0, 1.0, Rij_norm2)
     print(f"y2 = {y2}")
-    term2 = jnp.where(Rij_norm2 == 0.0, 1.0, (Qi_shell * Qj_core) / y2)
+    term2 = jnp.where(Rij_norm2 == 0.0, 0.0, (Qi_shell * Qj_core) / y2)
     ##term2 = jnp.where(jnp.linalg.norm(Rij+Di, axis=-1) == 0.0, 0.0, Qi_core * Qj_core / jnp.linalg.norm(Rij+Di, axis=-1))
     print(f"term2 = {term2}")
+    
+    Rij_norm3 = jnp.linalg.norm(Rij-Dj, axis=-1)
+    y3 = jnp.where(Rij_norm3 == 0.0, 1.0, Rij_norm3)
+    term3 = jnp.where(Rij_norm3 == 0.0, 0.0, (Qi_core * Qj_shell) / y3)
+    ##term2 = jnp.where(jnp.linalg.norm(Rij+Di, axis=-1) == 0.0, 0.0, Qi_core * Qj_core / jnp.linalg.norm(Rij+Di, axis=-1))
+    Rij_norm4 = jnp.linalg.norm(Rij+Di-Dj, axis=-1)
+    y4 = jnp.where(Rij_norm4 == 0.0, 1.0, Rij_norm4)
+    term4 = jnp.where(Rij_norm4 == 0.0, 0.0, (Qi_shell * Qj_shell) / y4)
     #term3 = jnp.where(jnp.linalg.norm(Rij-Dj, axis=-1) == 0.0, 0.0, Qi_core * Qj_core / jnp.linalg.norm(Rij-Dj, axis=-1))
     #print(f"term3 = {term3}")
     #term4 = jnp.where(jnp.linalg.norm(Rij+Di-Dj, axis=-1) == 0.0, 0.0, Qi_core * Qj_core / jnp.linalg.norm(Rij+Di-Dj, axis=-1))
     #print(f"term4 = {term4}")
-    U_coul = term2  #+ term3 + term4
+    U_coul = term1 + term2  + term3 + term4
     #U_coul = jnp.where(jnp.linalg.norm(Rij,axis=-1) == 0.0, 0.0,\
     #               Qi_core  * Qj_core  / (Rij_y )\
     #             + Qi_shell * Qj_core  / (Rij_y + Di)\
@@ -450,7 +458,7 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     print(f"U_coul array = {U_coul}") 
     # U_coul = 0.5 * jnp.ma.masked_invalid(U_coul).sum() # doesn't work in jax
     
-    U_coul = 0.5 * jnp.sum(U_coul) # jnp.where(jnp.isfinite(U_coul), U_coul, 0).sum() # might work in jax
+    U_coul = 0.5 * jnp.where(jnp.isfinite(U_coul), U_coul, 0).sum() # might work in jax
     print(f"U_coul value = ")
     print(f"{U_coul}")
     return ONE_4PI_EPS0*U_coul
