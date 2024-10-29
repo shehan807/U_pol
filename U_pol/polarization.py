@@ -2,6 +2,7 @@
 
 # Import standard Python modules 
 import time
+from datetime import datetime
 import os, sys
 sys.path.append('.')
 from util import *
@@ -11,6 +12,7 @@ from simtk.unit import *
 import numpy as np
 from scipy.optimize import minimize
 import logging
+from functools import partial
 import jax.numpy as jnp
 from jax.scipy.optimize import minimize as jax_minimize
 from jax import jit
@@ -24,7 +26,9 @@ def set_constants():
     EPSILON0 = (1e-6*8.8541878128e-12/(E_CHARGE*E_CHARGE*AVOGADRO))
     ONE_4PI_EPS0 = (1/(4*M_PI*EPSILON0))
 
+#@partial(jax.jit, static_argnames=['openmm','psi4','scf']) 
 
+# @jit(static_argnames=['openmm','psi4','scf'])
 def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
     """
     Function to generate inputs based on OpenMM realization (i.e., 
@@ -143,20 +147,33 @@ def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
         # set_drudes(...)
         # position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
         
-    r_core  = jnp.array(r_core)
-    r_shell = jnp.array(r_shell)
-    q_core  = jnp.array(q_core)
-    q_shell = jnp.array(q_shell)
-    alphas  = jnp.array(alphas)
+    jnp_r_core  = jnp.array(r_core)
+    jnp_r_shell = jnp.array(r_shell)
+    jnp_q_core  = jnp.array(q_core)
+    jnp_q_shell = jnp.array(q_shell)
+    jnp_alphas  = jnp.array(alphas)
+    
+    np_r_core  = np.array(r_core)
+    np_r_shell = np.array(r_shell)
+    np_q_core  = np.array(q_core)
+    np_q_shell = np.array(q_shell)
+    np_alphas  = np.array(alphas)
     
     # note that 
-    # k = jnp.true_divide(ONE_4PI_EPS0*(q_shell)**2, alphas, where=alphas != 0, out=jnp.zeros_like(alphas))
+    np_k = np.true_divide(ONE_4PI_EPS0*(np_q_shell)**2, np_alphas, where=np_alphas != 0, out=np.zeros_like(np_alphas))
     
     eps = 1e-15
-    k = jnp.divide(ONE_4PI_EPS0 * q_shell**2, alphas + eps)
+    jnp_k = get_k(jnp_q_shell, jnp_alphas)
+
+    print(f"%%%% Comparing harmonic spring constants %%%%%")
+    print(f"numpy k = {np_k}\njax.numpy k = {jnp_k}")
+    print(f"diff = {np.abs(np.array(jnp_k) - np_k)}")
     # k = jnp.where(alphas != 0, jnp.divide(ONE_4PI_EPS0 * (q_shell)**2, alphas), jnp.zeros_like(alphas))
     return r_core, q_core, r_shell, q_shell, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
 
+@jit
+def get_k(q_shell, alphas):
+    return jnp.divide(ONE_4PI_EPS0 * q_shell**2, alphas + 1e-15)
 
 def set_drudes(r_core, weights=None):
     """ 
@@ -173,6 +190,7 @@ def set_drudes(r_core, weights=None):
     """
     return 
 
+@jit
 def get_displacements(r_core, r_shell):
     """
     Given initial positions of a crystal structure or trajectory file, 
@@ -193,7 +211,7 @@ def get_displacements(r_core, r_shell):
     d = jnp.where(shell_mask[...,jnp.newaxis], d, 0.0)
     return d
 
-# @jit
+@jit
 def Upol(d, k):
     """
     Calculates polarization energy, 
@@ -209,18 +227,10 @@ def Upol(d, k):
     <np.float> Upol
         polarization energy
     """
-    print('k in Upol')
-    print(k)
-    print('d in Upol')
-    print(d)
-    #print('d**0.5')
-    #print(d**0.5)
-    print('d_mag calculation')
     d_mag = d_mag = jnp.sqrt(jnp.sum(jnp.square(d) + 1e-8, axis=2)) # jnp.linalg.norm(d, axis=2)
-    print(d_mag)
     return 0.5 * jnp.sum(k * d_mag**2)
 
-# @jit
+@jit
 def Ucoul(r_core, q_core, q_shell, Dij):
     """
     calculates total coulomb interaction energy, 
@@ -272,7 +282,7 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     
     return ONE_4PI_EPS0*U_coul
 
-# @jit
+@jit
 def Uind(r_core, q_core, q_shell, d, k):
     """
     calculates total induction energy, 
@@ -295,6 +305,7 @@ def Uind(r_core, q_core, q_shell, d, k):
     d = d.reshape(r_core.shape) # specifically to resolve scipy.optimize handling of 1D arrays
     U_pol  = Upol(d, k)
     U_coul = Ucoul(r_core, q_core, q_shell, d)
+    print(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
     return U_pol + U_coul
 
 def opt_d(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
@@ -347,6 +358,7 @@ def main():
     jax.config.update("jax_debug_nans", True) 
     global logger 
     logging.basicConfig(filename='log.out',level=logging.INFO, format='%(message)s')
+    logging.info(f"Log started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     # logger.setLevel(logging.DEBUG)
     # logging.getLogger().setLevel(logging.DEBUG)
 
@@ -357,18 +369,17 @@ def main():
 
     if testWater:
         logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
+        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(openmm=True, scf="openmm",
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         d_ref = get_displacements(r_core, r_shell) # get initial core/shell displacements 
         
-        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf=None,
+        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(openmm=True, scf=None,
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         d0 = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        print(d0)
         d = opt_d_jax(r_core, q_core, q_shell, d0.flatten(), k, methods=["BFGS"],d_ref=d_ref)
         U_ind = Uind(r_core, q_core, q_shell, d, k)
         logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
