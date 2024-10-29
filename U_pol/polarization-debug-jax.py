@@ -411,6 +411,7 @@ def Ucoul(r_core, q_core, q_shell, Dij):
 
     
     # Rij_norm = jnp.linalg.norm(Rij, axis=-1)
+    Di = jnp.asarray(Di)
     print(f"Rij.type = {type(Rij)}")
     print(f"Di.type = {type(Di)}")
     print(f"Rij.shape = {Rij.shape}")
@@ -421,7 +422,9 @@ def Ucoul(r_core, q_core, q_shell, Dij):
     print(f"Rij_Di.type = {type(Rij_Di)}")
     print(f"Rij_Di.shape = {Rij_Di.shape}")
     print(f"Rij_Di.shape = {Rij_Di.shape}")
-    Rij_Di = jnp.add(Rij, Di)
+    Rij_Di = jax.lax.add(Rij, Di)
+    print(f"Rij_Di.type = {type(Rij_Di)}")
+    print(f"Rij_Di.type = {type(Rij_Di)}")
     print(f"Rij_Di.shape = {Rij_Di.shape}")
     print(f"Rij_Di.shape = {Rij_Di.shape}")
     Rij_norm2 = jnp.linalg.norm(Rij_Di, axis=-1)
@@ -471,7 +474,7 @@ def Uind_np(r_core, q_core, q_shell, d, k):
     <np.float> Uind
         induction energy
     """
-    d = d.reshape(r_core.shape) # specifically to resolve scipy.optimize handling of 1D arrays
+    d = jnp.reshape(d, r_core.shape) # specifically to resolve scipy.optimize handling of 1D arrays
     U_pol  = Upol_np(d, k)
     U_coul = Ucoul_np(r_core, q_core, q_shell, d)
     # print(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
@@ -488,7 +491,7 @@ def Uind(r_core, q_core, q_shell, d, k):
         array of positions for all core and shell sites
     <np.array> q
         array of charges for all core and shell sites
-    <np.array> d
+    <np is apparently a <class 'jax._src.interpreters.ad.JVPTracer'> whereas Rij is <class 'jaxlib.xla_extension.ArrayImpl'>.
         array of displacements between core and shell sites
     <np.array> k
         array of harmonic spring constants for core/shell pairs
@@ -498,8 +501,14 @@ def Uind(r_core, q_core, q_shell, d, k):
         induction energy
     """
     print("\n STEPPED INTO Uind jax\n%%%%%%%%%%%%%%%%%%%%%%%%%")
-    d = d.reshape(r_core.shape) # specifically to resolve scipy.optimize handling of 1D arrays
+    print("d before reshape:")
     print(f"d = {d}")
+    print(type(d))
+    d = jnp.reshape(d,r_core.shape) # specifically to resolve scipy.optimize handling of 1D arrays
+    d = jax.lax.stop_gradient(d)
+    print("d after reshape:")
+    print(f"d = {d}")
+    print(type(d))
     U_pol  = Upol(d, k)
     U_coul = Ucoul(r_core, q_core, q_shell, d)
     # print(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
@@ -535,6 +544,7 @@ def opt_d_jax(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
     Uind w.r.t d. 
 
     """
+    print(f"d.type #1 = {type(d0)}")
     Uind_min = lambda d: Uind(r_core, q_core, q_shell, d, k)
     
     best_method = None
@@ -542,7 +552,8 @@ def opt_d_jax(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
         start = time.time()
         res = jax_minimize(Uind_min, d0, method=method)
         end = time.time()
-        d_opt = res.x.reshape(r_core.shape)
+        d_opt = jnp.reshape(res.x,r_core.shape)
+        print(f"d.type #2 = {type(d_opt)}")
         print(f"Method {method} took {end-start:.4f} sec.\nOptimized d:\n{d_opt}")
         if d_ref.any():
             diff = jnp.linalg.norm(d_ref-d_opt)
@@ -587,7 +598,7 @@ def main():
         
 
         jnp_d_ref = get_displacements(jnp_r_core, jnp_r_shell) # get initial core/shell displacements 
-
+        
         np_d_ref = get_displacements(np_r_core, np_r_shell) # get initial core/shell displacements 
         
         print(f"%%%% Comparing displacements %%%%%")
@@ -617,8 +628,9 @@ def main():
         
         jnp_d0 = get_displacements(jnp_r_core, jnp_r_shell) # get initial core/shell displacements 
         #
+        print(f"Di.type before opt_d_jax = {type(jnp_d0)}")
         start = time.time()
-        jnp_d = opt_d_jax(jnp_r_core, jnp_q_core, jnp_q_shell, jnp_d0.flatten(), jnp_k, methods=["BFGS"],d_ref=jnp_d_ref)
+        jnp_d = opt_d_jax(jnp_r_core, jnp_q_core, jnp_q_shell, jnp.ravel(jnp_d0), jnp_k, methods=["BFGS"],d_ref=jnp_d_ref)
         end = time.time()
         print(f"jnp opt_d: {end-start:.4f} seconds")
         
