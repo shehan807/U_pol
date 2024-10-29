@@ -212,11 +212,13 @@ def get_displacements(r_core, r_shell):
     """
     np_shell_mask = np.linalg.norm(r_shell, axis=-1) > 0.0
     np_d = r_core - r_shell
+    print(f"GET_DISPLACEMENTS (rcore-rshell): {np_d}") 
     np_d = np.where(np_shell_mask[...,jnp.newaxis], np_d, 0.0)
-    
+    print(f"GET_DISPLACEMENTS (numpy): {np_d}") 
     shell_mask = jnp.linalg.norm(r_shell, axis=-1) > 0.0
     d = r_core - r_shell
     d = jnp.where(shell_mask[...,jnp.newaxis], d, 0.0)
+    print(f"GET_DISPLACEMENTS (jax): {d}") 
     return d
 
 def Upol_np(d, k):
@@ -235,9 +237,10 @@ def Upol_np(d, k):
         polarization energy
     """
     print('\nNOW DEBUGGING Upol (numpy) d_mag\n---------------------------------\n')
-
+    print(f"k = {k}")
     d_mag = np.linalg.norm(d, axis=2)
     print(f"np d_mag = {d_mag}")
+    print(f"0.5 * np.sum(k * d_mag**2) = {0.5 * np.sum(k * d_mag**2)}")
     return 0.5 * np.sum(k * d_mag**2)
 
 # @jit
@@ -262,6 +265,7 @@ def Upol(d, k):
     # print(np_d)
     # np_d_mag = np.linalg.norm(np_d, axis=2)
     # print(f"numpy d_mag = {np_d_mag}")
+    print(f"k = {k}")
 
     d_mag_0 = jnp.linalg.norm(d, axis=2)
     print(f"jnp d_mag = {d_mag_0}")
@@ -274,6 +278,7 @@ def Upol(d, k):
     
     jnp_d_mag_where = jnp.linalg.norm(jnp.where(d > 0., d, 1.), axis=2)
     print(f"jnp (+resolved where issue?) d_mag = {jnp_d_mag_where}")
+    print(f"0.5 * jnp.sum(k * d_mag_0**2) = {0.5 * jnp.sum(k * d_mag_0**2)}")
 
     return 0.5 * jnp.sum(k * d_mag_0**2)
 
@@ -519,7 +524,7 @@ def Uind(r_core, q_core, q_shell, d, k):
     print(type(d))
     U_pol  = Upol(d, k)
     U_coul = Ucoul(r_core, q_core, q_shell, d)
-    # print(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
+    print(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
     return U_pol + U_coul
 
 def opt_d(r_core, q_core, q_shell, d0, k, methods=["BFGS"],d_ref=None):
@@ -638,7 +643,7 @@ def main():
         #
         print(f"Di.type before opt_d_jax = {type(jnp_d0)}")
         start = time.time()
-        jnp_d = opt_d_jax(jnp_r_core, jnp_q_core, jnp_q_shell, jnp.ravel(jnp_d0), jnp_k, methods=["BFGS"],d_ref=jnp_d_ref)
+        jnp_d = opt_d_jax(jnp_r_core, jnp_q_core, jnp_q_shell, jnp.ravel(jnp_d_ref), jnp_k, methods=["BFGS"],d_ref=jnp_d_ref)
         end = time.time()
         print(f"jnp opt_d: {end-start:.4f} seconds")
         
@@ -653,8 +658,8 @@ def main():
         print(f"np Uind = {np_U_ind:.3f} kJ/mol\njnp Uind = {jnp_U_ind:.3f} kJ/mol")
         
         logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
-        logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
-        logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
+        logger.info(f"Python U_ind = {jnp_U_ind:.4f} kJ/mol")
+        logger.info(f"{abs((U_ind_openmm - jnp_U_ind) / jnp_U_ind) * 100:.2f}% Error")
         logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
     
     #if testAcnit:
