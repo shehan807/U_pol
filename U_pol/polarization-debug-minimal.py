@@ -187,22 +187,12 @@ def get_displacements(r_core, r_shell):
     <np.array> d
         array of displacements for every core/shell pair
     """
-    #shell_mask = r_shell != 0.0
-    #d = r_core - r_shell
-    #d = jnp.where(shell_mask, d, 0.0)
-    
-    np_shell_mask = safe_norm(r_shell, 0.0, axis=-1) > 0.0
-    np_d = r_core - r_shell
-    print(f"GET_DISPLACEMENTS (rcore-rshell): {np_d}") 
-    np_d = np.where(np_shell_mask[...,jnp.newaxis], np_d, 0.0)
-    print(f"GET_DISPLACEMENTS (numpy): {np_d}") 
     shell_mask = safe_norm(r_shell, 0.0, axis=-1) > 0.0
     d = r_core - r_shell
     d = jnp.where(shell_mask[...,jnp.newaxis], d, 0.0)
-    print(f"GET_DISPLACEMENTS (jax): {d}") 
     return d
 
-# @jit
+@jit
 def Upol(Dij, k):
     """
     Calculates polarization energy, 
@@ -218,24 +208,16 @@ def Upol(Dij, k):
     <np.float> Upol
         polarization energy
     """
-    #print(f"k={k}")
     d_mag = safe_norm(Dij, 0.0, axis=2)
-    #print(f"d_mag={d_mag}")
-    U = 0.5 * jnp.sum(k * d_mag**2)
-    #print(f"Upol={U}")
-    return U
+    return 0.5 * jnp.sum(k * d_mag**2)
 
-# @jit
+@jit
 def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core):
     
     Di = Dij[:,jnp.newaxis,:,jnp.newaxis,:]
     Dj = Dij[jnp.newaxis,:,jnp.newaxis,:,:]
 
     # use where solution to enable nan-friendly gradients
-    #Rij_norm       = jnp.linalg.norm(Rij      , axis=-1) 
-    #Rij_Di_norm    = jnp.linalg.norm(Rij+Di   , axis=-1)
-    #Rij_Dj_norm    = jnp.linalg.norm(Rij-Dj   , axis=-1)
-    #Rij_Di_Dj_norm = jnp.linalg.norm(Rij+Di-Dj, axis=-1)
     Rij_norm       = safe_norm(Rij      , 0.0, axis=-1) 
     Rij_Di_norm    = safe_norm(Rij+Di   , 0.0, axis=-1)
     Rij_Dj_norm    = safe_norm(Rij-Dj   , 0.0, axis=-1)
@@ -252,10 +234,6 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core):
              + jnp.where(Rij_Di_norm == 0.0, 0.0,    Qi_shell * Qj_core  / _Rij_Di_norm)\
              + jnp.where(Rij_Dj_norm == 0.0, 0.0,    Qi_core  * Qj_shell / _Rij_Dj_norm)\
              + jnp.where(Rij_Di_Dj_norm == 0.0, 0.0, Qi_shell * Qj_shell / _Rij_Di_Dj_norm)
-    #U_coul = Qi_core  * Qj_core    / safe_norm(Rij, 0.0, axis=-1)\
-    #         + Qi_shell * Qj_core  / safe_norm(Rij+Di, 0.0, axis=-1)\
-    #         + Qi_core  * Qj_shell / safe_norm(Rij-Dj, 0.0, axis=-1)\
-    #         + Qi_shell * Qj_shell / safe_norm(Rij+Di-Dj, 0.0, axis=-1)
 
     # remove diagonal (intramolecular) components
     I = jnp.eye(U_coul.shape[0])
@@ -286,17 +264,14 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k, reshape=None):
     """
     if reshape: 
         Dij = jnp.reshape(Dij,reshape) # specifically to resolve scipy.optimize handling of 1D arrays
-    
-    # Dij = jax.lax.stop_gradient(Dij) # this resolves the bug where Uind is not differentiable 
-    # Di = jax.lax.stop_gradient(Di) # this resolves the bug where Uind is not differentiable 
-    # Dj = jax.lax.stop_gradient(Dj) # this resolves the bug where Uind is not differentiable
 
     U_pol  = Upol(Dij, k)
     U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core)
-    logger.info(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
+    logger.debug(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
     
     return U_pol + U_coul
 
+@jit
 def opt_d_jax(Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, k, methods=["BFGS"],d_ref=None, reshape=None):
     """
     TODO: Iteratively determine core/shell displacements, d, by minimizing 
@@ -307,43 +282,12 @@ def opt_d_jax(Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, k, methods=["BFGS
     Uind_min = lambda Dij: Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k, reshape)
      
     for method in methods:
-        
-        # solver 0
         start = time.time()
-        res = jax_minimize(Uind_min, Dij0, method=method)
+        solver = BFGS(fun=Uind_min)
+        res = solver.run(init_params=Dij0)
         end = time.time()
-        print(res)
-        logger.info(f"JAX.SCIPY.OPTIMIZE Minimizer completed in {end-start:.3f} seconds!!")
-        # solver 1
-        start = time.time()
-        solver1 = BFGS(fun=Uind_min)
-        res1 = solver1.run(init_params=Dij0)
-        end = time.time()
-        print("jaxopt BFGS")
-        print(jnp.reshape(res1.params,reshape))
         logger.info(f"JAXOPT.BFGS Minimizer completed in {end-start:.3f} seconds!!")
-        # solver 2
-        start = time.time()
-        solver2 = LBFGS(fun=Uind_min)
-        res2 = solver2.run(init_params=Dij0)
-        end = time.time()
-        print("jaxopt LBFGS")
-        print(jnp.reshape(res2.params,reshape))
-        # solver 3
-        start = time.time()
-        solver3 = ScipyMinimize(fun=Uind_min)
-        res3 = solver3.run(init_params=Dij0)
-        end = time.time()
-        print("jaxopt scipyminimize")
-        print(jnp.reshape(res3.params,reshape))
-        # solver 4
-        start = time.time()
-        solver4 = minimize(Uind_min, Dij0, method=method)
-        end = time.time()
-        print("scipy minimizer")
-        print(jnp.reshape(solver4.x,reshape))
-        logger.info(f"JAXOPT.LBFGS Minimizer completed in {end-start:.3f} seconds!!")
-        d_opt = jnp.reshape(res.x,reshape)
+        d_opt = jnp.reshape(res.params,reshape)
         if d_ref.any():
             diff = jnp.linalg.norm(d_ref-d_opt)
     return d_opt
@@ -362,7 +306,7 @@ def main():
     set_constants()
 
     testWater = True
-    testAcnit = False
+    testAcnit = True
 
     if testWater:
         logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
@@ -379,13 +323,7 @@ def main():
         
         Dij = opt_d_jax(Rij, jnp.ravel(Dij0), Qi_shell, Qj_shell, Qi_core, Qj_core, k, d_ref=Dij_ref, reshape=Dij0.shape)
         
-        print(f"jax output:\n{Dij}\nopenmm output:\n{Dij_ref}") 
-        print("Uind(...) for jax optimized displacements:")
         U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
-        print(U_ind)
-        print("Uind(...) for openmm optimized displacements:")
-        U_ind = Uind(Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
-        print(U_ind)
 
         logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
@@ -394,18 +332,18 @@ def main():
     
     if testAcnit:
         logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        Rij, Dij_ref, Di_ref, Dj_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
+        Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
                                                     pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
                                                     ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
                                                     res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
         
-        Rij, Dij0, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
+        Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
                                                     pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
                                                     ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
                                                     res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
         
-        Dij, Di, Dj = opt_d_jax(Rij, jnp.ravel(Dij0), Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, d_ref=Dij_ref, reshape=Dij0.shape)
-        U_ind = Uind(Rij, Dij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
+        Dij = opt_d_jax(Rij, jnp.ravel(Dij0), Qi_shell, Qj_shell, Qi_core, Qj_core, k, d_ref=Dij_ref, reshape=Dij0.shape)
+        U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
 
         logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
