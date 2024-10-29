@@ -17,6 +17,7 @@ import jax.numpy as jnp
 from jax.scipy.optimize import minimize as jax_minimize
 from jax import jit
 import jax 
+from optax import safe_norm 
 
 def set_constants():
     global ONE_4PI_EPS0 
@@ -148,7 +149,7 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
         # position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
         
     r_core  = jnp.array(r_core)
-    r_shell = jnp.array(r_shell)
+    r_shell = jnp.array(r_shell) #* (1+1e-3) #NOTE: hard-coded but need to implement strategic initial Drude position scheme
     q_core  = jnp.array(q_core)
     q_shell = jnp.array(q_shell)
     alphas  = jnp.array(alphas)
@@ -161,8 +162,6 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
     
     # create Di and Dj matrices (account for nonzero values that are not true displacements)
     Dij = get_displacements(r_core, r_shell) 
-    Di = Dij[:,jnp.newaxis,:,jnp.newaxis,:]
-    Dj = Dij[jnp.newaxis,:,jnp.newaxis,:,:]
 
     # break up core-shell, shell-core, and shell-shell terms
     Qi_shell = q_shell[:,jnp.newaxis,:,jnp.newaxis]
@@ -170,7 +169,7 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
     Qi_core  = q_core[:,jnp.newaxis,:,jnp.newaxis]
     Qj_core  = q_core[jnp.newaxis,:,jnp.newaxis,:]
     
-    return Rij, Dij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
+    return Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
 
 # @jit
 def get_displacements(r_core, r_shell):
@@ -188,10 +187,19 @@ def get_displacements(r_core, r_shell):
     <np.array> d
         array of displacements for every core/shell pair
     """
+    #shell_mask = r_shell != 0.0
+    #d = r_core - r_shell
+    #d = jnp.where(shell_mask, d, 0.0)
     
-    shell_mask = jnp.linalg.norm(r_shell, axis=-1) > 0.0
+    np_shell_mask = safe_norm(r_shell, 0.0, axis=-1) > 0.0
+    np_d = r_core - r_shell
+    print(f"GET_DISPLACEMENTS (rcore-rshell): {np_d}") 
+    np_d = np.where(np_shell_mask[...,jnp.newaxis], np_d, 0.0)
+    print(f"GET_DISPLACEMENTS (numpy): {np_d}") 
+    shell_mask = safe_norm(r_shell, 0.0, axis=-1) > 0.0
     d = r_core - r_shell
     d = jnp.where(shell_mask[...,jnp.newaxis], d, 0.0)
+    print(f"GET_DISPLACEMENTS (jax): {d}") 
     return d
 
 # @jit
@@ -210,41 +218,54 @@ def Upol(Dij, k):
     <np.float> Upol
         polarization energy
     """
-    d_mag = jnp.linalg.norm(Dij, axis=2)
-    return 0.5 * jnp.sum(k * d_mag**2)
+    #print(f"k={k}")
+    d_mag = safe_norm(Dij, 0.0, axis=2)
+    #print(f"d_mag={d_mag}")
+    U = 0.5 * jnp.sum(k * d_mag**2)
+    #print(f"Upol={U}")
+    return U
 
 # @jit
-def Ucoul(Rij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core):
+def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core):
+    
+    Di = Dij[:,jnp.newaxis,:,jnp.newaxis,:]
+    Dj = Dij[jnp.newaxis,:,jnp.newaxis,:,:]
 
     # use where solution to enable nan-friendly gradients
-    Rij_norm       = jnp.linalg.norm(Rij      , axis=-1) 
-    Rij_Di_norm    = jnp.linalg.norm(Rij+Di   , axis=-1)
-    Rij_Dj_norm    = jnp.linalg.norm(Rij-Dj   , axis=-1)
-    Rij_Di_Dj_norm = jnp.linalg.norm(Rij+Di-Dj, axis=-1)
+    #Rij_norm       = jnp.linalg.norm(Rij      , axis=-1) 
+    #Rij_Di_norm    = jnp.linalg.norm(Rij+Di   , axis=-1)
+    #Rij_Dj_norm    = jnp.linalg.norm(Rij-Dj   , axis=-1)
+    #Rij_Di_Dj_norm = jnp.linalg.norm(Rij+Di-Dj, axis=-1)
+    Rij_norm       = safe_norm(Rij      , 0.0, axis=-1) 
+    Rij_Di_norm    = safe_norm(Rij+Di   , 0.0, axis=-1)
+    Rij_Dj_norm    = safe_norm(Rij-Dj   , 0.0, axis=-1)
+    Rij_Di_Dj_norm = safe_norm(Rij+Di-Dj, 0.0, axis=-1)
     
     # allow divide by zero 
-    _Rij_norm       = jnp.where(Rij_norm == 0.0, 1.0, Rij_norm)  
-    _Rij_Di_norm    = jnp.where(Rij_Di_norm == 0.0, 1.0, Rij_Di_norm)
-    _Rij_Dj_norm    = jnp.where(Rij_Dj_norm == 0.0, 1.0, Rij_Dj_norm)
-    _Rij_Di_Dj_norm = jnp.where(Rij_Di_Dj_norm == 0.0, 1.0, Rij_Di_Dj_norm)
-
-    
+    _Rij_norm       = jnp.where(Rij_norm == 0.0,       jnp.inf, Rij_norm)  
+    _Rij_Di_norm    = jnp.where(Rij_Di_norm == 0.0,    jnp.inf, Rij_Di_norm)
+    _Rij_Dj_norm    = jnp.where(Rij_Dj_norm == 0.0,    jnp.inf, Rij_Dj_norm)
+    _Rij_Di_Dj_norm = jnp.where(Rij_Di_Dj_norm == 0.0, jnp.inf, Rij_Di_Dj_norm)
+   
+    # trying with safe_norm 
     U_coul = jnp.where(Rij_norm == 0.0, 0.0,         Qi_core  * Qj_core  / _Rij_norm)\
              + jnp.where(Rij_Di_norm == 0.0, 0.0,    Qi_shell * Qj_core  / _Rij_Di_norm)\
              + jnp.where(Rij_Dj_norm == 0.0, 0.0,    Qi_core  * Qj_shell / _Rij_Dj_norm)\
              + jnp.where(Rij_Di_Dj_norm == 0.0, 0.0, Qi_shell * Qj_shell / _Rij_Di_Dj_norm)
+    #U_coul = Qi_core  * Qj_core    / safe_norm(Rij, 0.0, axis=-1)\
+    #         + Qi_shell * Qj_core  / safe_norm(Rij+Di, 0.0, axis=-1)\
+    #         + Qi_core  * Qj_shell / safe_norm(Rij-Dj, 0.0, axis=-1)\
+    #         + Qi_shell * Qj_shell / safe_norm(Rij+Di-Dj, 0.0, axis=-1)
 
     # remove diagonal (intramolecular) components
-    print(jnp.triu(U_coul))
     I = jnp.eye(U_coul.shape[0])
     U_coul = U_coul * (1 - I[:,:,jnp.newaxis,jnp.newaxis])
-    print(U_coul)
     
     U_coul = 0.5 * jnp.where(jnp.isfinite(U_coul), U_coul, 0).sum() # might work in jax
     return ONE_4PI_EPS0*U_coul
 
 # @jit
-def Uind(Rij, Dij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, reshape=None):
+def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k, reshape=None):
     """
     calculates total induction energy, 
     U_ind = Upol + Uuu + Ustat.
@@ -266,33 +287,66 @@ def Uind(Rij, Dij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, reshape=None
     if reshape: 
         Dij = jnp.reshape(Dij,reshape) # specifically to resolve scipy.optimize handling of 1D arrays
     
-    Dij = jax.lax.stop_gradient(Dij) # this resolves the bug where Uind is not differentiable 
-    Di = jax.lax.stop_gradient(Di) # this resolves the bug where Uind is not differentiable 
-    Dj = jax.lax.stop_gradient(Dj) # this resolves the bug where Uind is not differentiable
+    # Dij = jax.lax.stop_gradient(Dij) # this resolves the bug where Uind is not differentiable 
+    # Di = jax.lax.stop_gradient(Di) # this resolves the bug where Uind is not differentiable 
+    # Dj = jax.lax.stop_gradient(Dj) # this resolves the bug where Uind is not differentiable
 
     U_pol  = Upol(Dij, k)
-    U_coul = Ucoul(Rij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core)
+    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core)
+    logger.info(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
     
     return U_pol + U_coul
 
-def opt_d_jax(Rij, Dij0, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, methods=["BFGS"],d_ref=None, reshape=None):
+def opt_d_jax(Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, k, methods=["BFGS"],d_ref=None, reshape=None):
     """
     TODO: Iteratively determine core/shell displacements, d, by minimizing 
     Uind w.r.t d. 
 
     """
-    Uind_min = lambda Dij: Uind(Rij, Dij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, reshape)
+    from jaxopt import BFGS, LBFGS, ScipyMinimize
+    Uind_min = lambda Dij: Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k, reshape)
      
     for method in methods:
+        
+        # solver 0
         start = time.time()
         res = jax_minimize(Uind_min, Dij0, method=method)
         end = time.time()
         print(res)
         logger.info(f"JAX.SCIPY.OPTIMIZE Minimizer completed in {end-start:.3f} seconds!!")
+        # solver 1
+        start = time.time()
+        solver1 = BFGS(fun=Uind_min)
+        res1 = solver1.run(init_params=Dij0)
+        end = time.time()
+        print("jaxopt BFGS")
+        print(jnp.reshape(res1.params,reshape))
+        logger.info(f"JAXOPT.BFGS Minimizer completed in {end-start:.3f} seconds!!")
+        # solver 2
+        start = time.time()
+        solver2 = LBFGS(fun=Uind_min)
+        res2 = solver2.run(init_params=Dij0)
+        end = time.time()
+        print("jaxopt LBFGS")
+        print(jnp.reshape(res2.params,reshape))
+        # solver 3
+        start = time.time()
+        solver3 = ScipyMinimize(fun=Uind_min)
+        res3 = solver3.run(init_params=Dij0)
+        end = time.time()
+        print("jaxopt scipyminimize")
+        print(jnp.reshape(res3.params,reshape))
+        # solver 4
+        start = time.time()
+        solver4 = minimize(Uind_min, Dij0, method=method)
+        end = time.time()
+        print("scipy minimizer")
+        print(jnp.reshape(solver4.x,reshape))
+        logger.info(f"JAXOPT.LBFGS Minimizer completed in {end-start:.3f} seconds!!")
         d_opt = jnp.reshape(res.x,reshape)
         if d_ref.any():
             diff = jnp.linalg.norm(d_ref-d_opt)
-    return d_opt, d_opt[:,jnp.newaxis,:,jnp.newaxis,:], d_opt[jnp.newaxis,:,jnp.newaxis,:,:]
+    return d_opt
 logger = logging.getLogger(__name__)
 def main(): 
 
@@ -313,44 +367,50 @@ def main():
     if testWater:
         logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
         
-        Rij, Dij_ref, Di_ref, Dj_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
+        Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         
-        Rij, Dij0, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
+        Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         
-        print(Dij0)
-        Dij, Di, Dj = opt_d_jax(Rij, jnp.ravel(Dij0), Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, d_ref=Dij_ref, reshape=Dij0.shape)
-        print(Dij)
-        U_ind = Uind(Rij, Dij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
+        Dij = opt_d_jax(Rij, jnp.ravel(Dij0), Qi_shell, Qj_shell, Qi_core, Qj_core, k, d_ref=Dij_ref, reshape=Dij0.shape)
+        
+        print(f"jax output:\n{Dij}\nopenmm output:\n{Dij_ref}") 
+        print("Uind(...) for jax optimized displacements:")
+        U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
+        print(U_ind)
+        print("Uind(...) for openmm optimized displacements:")
+        U_ind = Uind(Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
+        print(U_ind)
 
         logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
         logger.info(f"{abs((Uind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
         logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
     
-    #if testAcnit:
-    #    logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-    #    r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
-    #                                                pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
-    #                                                ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
-    #                                                res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
-    #    d_ref = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-    #    r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf=None,
-    #                                                pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
-    #                                                ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
-    #                                                res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
-    #    d0 = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-    #    d = opt_d(r_core, q_core, q_shell, d0.flatten(), k, methods=["BFGS","L-BFGS-B","TNC","SLSQP","Nelder-Mead","CG","Powell"],d_ref=d_ref)
-    #    U_ind = Uind(r_core, q_core, q_shell, d, k)
-    #    logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
-    #    logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
-    #    logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
-    #    logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+    if testAcnit:
+        logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+        Rij, Dij_ref, Di_ref, Dj_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
+                                                    pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
+                                                    ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
+                                                    res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
+        
+        Rij, Dij0, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
+                                                    pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
+                                                    ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
+                                                    res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
+        
+        Dij, Di, Dj = opt_d_jax(Rij, jnp.ravel(Dij0), Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k, d_ref=Dij_ref, reshape=Dij0.shape)
+        U_ind = Uind(Rij, Dij, Di, Dj, Qi_shell, Qj_shell, Qi_core, Qj_core, k)
+
+        logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
+        logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
+        logger.info(f"{abs((Uind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
+        logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
 
 
 
