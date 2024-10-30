@@ -3,6 +3,8 @@ from openmm.app import *
 from openmm import *
 from simtk.unit import *
 from sys import stdout
+from sapt_exclusions import * 
+
 def get_raw_inputs(simmd, system, nonbonded_force, drude_force):
     positions = simmd.context.getState(getPositions=True).getPositions()
     r = []
@@ -88,6 +90,11 @@ for i in range(system.getNumForces()):
 platform = Platform.getPlatformByName('CUDA')
 simmd = Simulation(modeller.topology, system, integrator, platform)
 simmd.context.setPositions(modeller.positions)
+
+#************************************************
+#         IMPORTANT: generate exclusions for SAPT-FF
+sapt_exclusions = sapt_generate_exclusions(simmd,system,modeller.positions)
+#************************************************
 
 # integrate one step to optimize Drude positions.  Note that atoms won't move if masses are set to zero
 # Get the NonbondedForce which contains the charges and other parameters
