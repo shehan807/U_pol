@@ -105,6 +105,8 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
         # Initialize r_core, r_shell, q_core (q_shell is not needed)
         topology = modeller.getTopology()
         r_core = []; r_shell = []; q_core = []; q_shell=[]; alphas = []; tholes = []
+        tholeTrue = False
+        tholeMatrixMade = False
         for i, res in enumerate(topology.residues()):
             res_core_pos = []; res_shell_pos = []; res_charge = []; res_shell_charge = []; res_alpha = []; res_thole = []
             for atom in res.atoms():
@@ -119,24 +121,47 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
                     drude_params = drude.getParticleParameters(parent_indices.index(atom.index))
                     drude_charge = drude_params[5].value_in_unit(elementary_charge)
                     alpha = drude_params[6]
-                    for n in res.atoms():
-                        if n.index in drude_indices:
-                            n_drude = ""
-                        else:
-                            n_drude = "not"
-                        print(f"atom {n.index} is {n_drude} a drude")
-                    for i in range(10):
-                        print(i)
-                        screened_params = drude.getScreenedPairParameters(i)
-                        print(screened_params)
-                    thole = 1.3 
-                    print(f"thole = {thole}")
+                    numScreenedPairs = drude.getNumScreenedPairs()
+                    if numScreenedPairs > 0:
+                        tholeTrue = True
+                        if not tholeMatrixMade:
+                            natoms = len(list(res.atoms()))
+                            ncore = len(parent_indices)
+                            nmol = len(list(topology.residues()))
+                            tholeMatrix = np.zeros((nmol,ncore,ncore)) # this assumes that the u_scale term is identical between core-core, shell-shell, and core-shell interactions
+                            for sp_i in range(numScreenedPairs):
+                                screened_params = drude.getScreenedPairParameters(sp_i)
+                                prt0_params      = drude.getParticleParameters(screened_params[0])
+                                print(f'prt0 parameters: {prt0_params}')
+                                drude0 = prt0_params[0]
+                                core0  = prt0_params[1]
+                                alpha0 = prt0_params[6].value_in_unit(nanometer**3)
+                                imol = int(core0 / natoms)
+                                prt1_params      = drude.getParticleParameters(screened_params[1])
+                                print(f'prt1 parameters: {prt1_params}')
+                                drude1 = prt1_params[0]
+                                core1  = prt1_params[1]
+                                alpha1 = prt1_params[6].value_in_unit(nanometer**3)
+                                thole = screened_params[2]
+                                if core0 >= natoms: 
+                                    core0 = (core0 % natoms) 
+                                if core1 >= natoms:
+                                    core1 = (core1 % natoms) 
+
+                                tholeMatrix[imol][core0][core1] = thole / (alpha0 * alpha1)**(1./6.) 
+                                tholeMatrix[imol][core1][core0] = thole / (alpha0 * alpha1)**(1./6.)
+
+                            tholeMatrix = list(tholeMatrix)
+                            tholeMatrixMade = True
+                    elif numScreenedPairs == 0:
+                        tholeTrue = False
+                        thole = 0.0
                     res_shell_charge.append(drude_charge)
                 else:
                     res_shell_charge.append(0.0)
                     drude_pos = [0.0,0.0,0.0]
                     alpha = 0.0 * nanometer**3
-                    thole = 0.0 
+                    thole = 0.0 # only core atom pairs are assigned thole screening parameters 
                 pos = list(positions[atom.index])
                 pos = [p.value_in_unit(nanometer) for p in pos]
                 alpha = alpha.value_in_unit(nanometer**3)
@@ -153,7 +178,10 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
             q_core.append(res_charge)
             q_shell.append(res_shell_charge)
             alphas.append(res_alpha)
-            tholes.append(res_thole)
+            if tholeTrue:
+                tholes = tholeMatrix
+            else:
+                tholes.append(res_thole)
     elif psi4:
         pass 
         # TODO: Given initial positions of a crystal structure or trajectory file, 
@@ -163,7 +191,7 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
         # position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
         
     r_core  = jnp.array(r_core)
-    r_shell = jnp.array(r_shell) #* (1+1e-3) #NOTE: hard-coded but need to implement strategic initial Drude position scheme
+    r_shell = jnp.array(r_shell) 
     q_core  = jnp.array(q_core)
     q_shell = jnp.array(q_shell)
     alphas  = jnp.array(alphas)
@@ -173,18 +201,15 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
     k = np.where(alphas == 0.0, 0.0, ONE_4PI_EPS0 * q_shell**2 / _alphas)
     
     # broadcast r_core (nmols, natoms, 3) --> Rij (nmols, nmols, natoms, natoms, 3)
+    print("Rij is created *here*")
     Rij = r_core[jnp.newaxis,:,jnp.newaxis,:,:] - r_core[:,jnp.newaxis,:,jnp.newaxis,:]
+    print(f"rcore =\n{r_core}\nRij=\n{Rij}")
     
-    # correspondingly, create an alphaij matrix and Sij matrix for thole screening
-    aij_1_6 = (alphas[jnp.newaxis,:,jnp.newaxis,:] * alphas[:,jnp.newaxis,:,jnp.newaxis])**(1./6.) # nmols, nmols, natoms, natoms
-    aij_1_6 = jnp.where(aij_1_6 == 0.0, jnp.inf, aij_1_6)  
-    u_scale = tholes[jnp.newaxis,:,jnp.newaxis,:] / aij_1_6
-    print(f"aij_1_6={aij_1_6}\ntholes={tholes}\nu_scale={u_scale}")
+    if tholes.shape != Rij.shape:
+        u_scale = tholes[jnp.newaxis,...] * jnp.eye(Rij.shape[0])[:,:,jnp.newaxis,jnp.newaxis] 
+    else:
+        u_scale = tholes 
 
-    #Rij_norm = safe_norm(Rij, 0.0, axis=-1)
-    #Sij = 1. - (1. + (thole * Rij_norm) / (2. * aij_1_6)) * jnp.exp(-thole * Rij_norm / aij_1_6)
-    #Sij = jnp.where(Sij == 0.0, 1.0, Sij)
-    print(f"Sij = {Sij}")
     # create Di and Dj matrices (account for nonzero values that are not true displacements)
     Dij = get_displacements(r_core, r_shell) 
 
@@ -194,7 +219,7 @@ def get_inputs(openmm=True, psi4=False, scf='openmm', jax=True, **kwargs):
     Qi_core  = q_core[:,jnp.newaxis,:,jnp.newaxis]
     Qj_core  = q_core[jnp.newaxis,:,jnp.newaxis,:]
     
-    return Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
+    return Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
 
 # @jit
 def get_displacements(r_core, r_shell):
@@ -237,13 +262,14 @@ def Upol(Dij, k):
     return 0.5 * jnp.sum(k * d_mag**2)
 
 # @jit
-def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij):
+def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
     
     Di = Dij[:,jnp.newaxis,:,jnp.newaxis,:]
     Dj = Dij[jnp.newaxis,:,jnp.newaxis,:,:]
 
     # use where solution to enable nan-friendly gradients
     Rij_norm       = safe_norm(Rij      , 0.0, axis=-1) 
+    print(f"Rij =\n{Rij},\nRij_norm =\n{Rij_norm}") 
     Rij_Di_norm    = safe_norm(Rij+Di   , 0.0, axis=-1)
     Rij_Dj_norm    = safe_norm(Rij-Dj   , 0.0, axis=-1)
     Rij_Di_Dj_norm = safe_norm(Rij+Di-Dj, 0.0, axis=-1)
@@ -253,6 +279,20 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij):
     _Rij_Di_norm    = jnp.where(Rij_Di_norm == 0.0,    jnp.inf, Rij_Di_norm)
     _Rij_Dj_norm    = jnp.where(Rij_Dj_norm == 0.0,    jnp.inf, Rij_Dj_norm)
     _Rij_Di_Dj_norm = jnp.where(Rij_Di_Dj_norm == 0.0, jnp.inf, Rij_Di_Dj_norm)
+    
+    #Rij_norm = safe_norm(Rij, 0.0, axis=-1)
+    Sij = 1. - (1. + 0.5*Rij_norm*u_scale) * jnp.exp(-u_scale * Rij_norm )
+    #Sij = jnp.where(Sij == 0.0, 1.0, Sij)
+    print(f"Sij = {Sij}")
+    Sij_Di = 1. - (1. + 0.5*Rij_Di_norm*u_scale) * jnp.exp(-u_scale * Rij_Di_norm )
+    #Sij_Di = jnp.where(Sij_Di == 0.0, 1.0, Sij_Di)
+    print(f"Sij_Di = {Sij_Di}")
+    Sij_Dj = 1. - (1. + 0.5*Rij_Dj_norm*u_scale) * jnp.exp(-u_scale * Rij_Dj_norm )
+    #Sij_Dj = jnp.where(Sij_Dj == 0.0, 1.0, Sij_Dj)
+    print(f"Sij_Dj = {Sij_Dj}")
+    Sij_Di_Dj = 1. - (1. + 0.5*Rij_Di_Dj_norm*u_scale) * jnp.exp(-u_scale * Rij_Di_Dj_norm )
+    #Sij_Di_Dj = jnp.where(Sij_Di_Dj == 0.0, 1.0, Sij_Di_Dj)
+    print(f"Sij_Di_Dj = {Sij_Di_Dj}")
    
     # trying with safe_norm 
     U_coul = jnp.where(Rij_norm == 0.0, 0.0,         Qi_core  * Qj_core  / _Rij_norm)\
@@ -260,18 +300,33 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij):
              + jnp.where(Rij_Dj_norm == 0.0, 0.0,    Qi_core  * Qj_shell / _Rij_Dj_norm)\
              + jnp.where(Rij_Di_Dj_norm == 0.0, 0.0, Qi_shell * Qj_shell / _Rij_Di_Dj_norm)
     print(f"U_coul =\n {U_coul}")
-    print(f"Sij =\n {Sij}")
-    U_coul *= Sij 
-    print(f"Sij*U_coul = {U_coul}")
+    
+    # trying with safe_norm 
+    U_coul_intra = jnp.where(Rij_norm == 0.0, 0.0,       Sij       * -Qi_shell  * -Qj_shell  / _Rij_norm)\
+                 + jnp.where(Rij_Di_norm == 0.0, 0.0,    Sij_Di    * Qi_shell * -Qj_shell  / _Rij_Di_norm)\
+                 + jnp.where(Rij_Dj_norm == 0.0, 0.0,    Sij_Dj    * -Qi_shell  * Qj_shell / _Rij_Dj_norm)\
+                 + jnp.where(Rij_Di_Dj_norm == 0.0, 0.0, Sij_Di_Dj * Qi_shell * Qj_shell / _Rij_Di_Dj_norm)
+    print(f"U_coul_intra =\n {U_coul_intra}")
+    
+    # keep diagonal (intramolecular) components except for self-terms
+    I_intra = jnp.eye(U_coul_intra.shape[0])
+    I_self  = jnp.eye(U_coul_intra.shape[-1])
+    U_coul_intra = (U_coul_intra * I_intra[:,:,jnp.newaxis,jnp.newaxis]) * (1 - I_self[jnp.newaxis,jnp.newaxis,:,:])
+    print(f"U_coul_intra =\n {U_coul_intra}")
+    U_coul_intra = 0.5 * jnp.where(jnp.isfinite(U_coul_intra), U_coul_intra, 0).sum() # might work in jax
+    print(f"U_coul_intra (sum) =\n {ONE_4PI_EPS0*U_coul_intra}")
+    
     # remove diagonal (intramolecular) components
     I = jnp.eye(U_coul.shape[0])
-    U_coul = U_coul * (1 - I[:,:,jnp.newaxis,jnp.newaxis])
+    U_coul_inter = U_coul * (1 - I[:,:,jnp.newaxis,jnp.newaxis])
+    print(f"U_coul_inter =\n {U_coul_inter}")
     
-    U_coul = 0.5 * jnp.where(jnp.isfinite(U_coul), U_coul, 0).sum() # might work in jax
-    return ONE_4PI_EPS0*U_coul
+    U_coul = 0.5 * jnp.where(jnp.isfinite(U_coul_inter), U_coul_inter, 0).sum() # might work in jax
+    print(f"U_coul_inter (sum) =\n {ONE_4PI_EPS0*U_coul}")
+    return ONE_4PI_EPS0*(U_coul + U_coul_intra)
 
 # @jit
-def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, reshape=None):
+def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=None):
     """
     calculates total induction energy, 
     U_ind = Upol + Uuu + Ustat.
@@ -294,20 +349,20 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, reshape=None):
         Dij = jnp.reshape(Dij,reshape) # specifically to resolve scipy.optimize handling of 1D arrays
 
     U_pol  = Upol(Dij, k)
-    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij)
+    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale)
     logger.debug(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
     
     return U_pol + U_coul
 
 # @jit
-def opt_d_jax(Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, methods=["BFGS"],d_ref=None, reshape=None):
+def opt_d_jax(Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, methods=["BFGS"],d_ref=None, reshape=None):
     """
     TODO: Iteratively determine core/shell displacements, d, by minimizing 
     Uind w.r.t d. 
 
     """
     from jaxopt import BFGS, LBFGS, ScipyMinimize
-    Uind_min = lambda Dij: Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, reshape)
+    Uind_min = lambda Dij: Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape)
      
     for method in methods:
         start = time.time()
@@ -339,19 +394,19 @@ def main():
     if testWater:
         logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
         
-        Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
+        Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         
-        Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
+        Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
                                                     pdb="../benchmarks/OpenMM/water/water.pdb",
                                                     ff_xml="../benchmarks/OpenMM/water/water.xml",
                                                     res_xml="../benchmarks/OpenMM/water/water_residue.xml")
         
-        Dij = opt_d_jax(Rij, jnp.ravel(Dij0), Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, d_ref=Dij_ref, reshape=Dij0.shape)
+        Dij = opt_d_jax(Rij, jnp.ravel(Dij0), Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, d_ref=Dij_ref, reshape=Dij0.shape)
         
-        U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k)
+        U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
 
         logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
@@ -360,18 +415,18 @@ def main():
     
     if testAcnit:
         logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
+        Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = get_inputs(openmm=True, scf='openmm', 
                                                     pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
                                                     ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
                                                     res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
         
-        Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
+        Rij, Dij0, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = get_inputs(openmm=True, scf=None, 
                                                     pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
                                                     ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
                                                     res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
         
-        Dij = opt_d_jax(Rij, jnp.ravel(Dij0), Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k, d_ref=Dij_ref, reshape=Dij0.shape)
-        U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, Sij, k)
+        Dij = opt_d_jax(Rij, jnp.ravel(Dij0), Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, d_ref=Dij_ref, reshape=Dij0.shape)
+        U_ind = Uind(Rij, Dij_ref, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
 
         logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
         logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
