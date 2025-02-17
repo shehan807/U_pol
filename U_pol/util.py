@@ -187,6 +187,13 @@ def get_inputs(scf="openmm", **kwargs):
                                 tholeMatrix = np.zeros(
                                     (nmol, natoms_per_res, natoms_per_res)
                                 )  # this assumes that the u_scale term is identical between core-core, shell-shell, and core-shell interactions
+                                logger.info(f"natoms_per_res={natoms_per_res}")
+                                logger.info(f"natoms={natoms}")
+                                logger.info(f"ncore={ncore}")
+                                logger.info(f"nmol={nmol}")
+                                logger.info(f"residue_list={residue_list}")
+                                logger.info(f"tholeMatrix.shape={tholeMatrix.shape}")
+
                                 for sp_i in range(numScreenedPairs):
                                     screened_params = drude.getScreenedPairParameters(
                                         sp_i
@@ -205,6 +212,21 @@ def get_inputs(scf="openmm", **kwargs):
                                     core1 = prt1_params[1]
                                     alpha1 = prt1_params[6].value_in_unit(nanometer**3)
                                     thole = screened_params[2]
+                                    
+                                    logger.info(f"screened_params={screened_params}")
+                                    logger.info(f"drude0={drude0}")
+                                    logger.info(f"core0={core0}")
+                                    logger.info(f"alpha0={alpha0}")
+                                    logger.info(f"imol={imol}")
+                                    logger.info(f"prt1_params={prt1_params}")
+                                    logger.info(f"drude1={drude1}")
+                                    logger.info(f"core1={core1}")
+                                    logger.info(f"alpha1={alpha1}")
+                                    logger.info(f"thole={thole}")
+
+                                    logger.info(f"(core0,natoms)=({core0},{natoms})")
+                                    logger.info(f"(core1,natoms)=({core1},{natoms})")
+                                    
                                     if core0 >= natoms:
                                         core0 = core0 % natoms
                                     if core1 >= natoms:
@@ -247,7 +269,7 @@ def get_inputs(scf="openmm", **kwargs):
         q_core = jnp.array(q_core)
         q_shell = jnp.array(q_shell)
         alphas = jnp.array(alphas)
-
+        
         _alphas = jnp.where(alphas == 0.0, jnp.inf, alphas)
         k = jnp.where(alphas == 0.0, 0.0, ONE_4PI_EPS0 * q_shell**2 / _alphas)
 
@@ -277,6 +299,33 @@ def get_inputs(scf="openmm", **kwargs):
         Qj_core = q_core[jnp.newaxis, :, jnp.newaxis, :]
 
         # jnp.savez(npz_inputs, Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm=Uind_openmm.value_in_unit(kilojoules_per_mole)
+        logger.info("%%%%%%%%%%%%%%%%%%%%%% Printing polarization.py elements %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
+        logger.info(f"r_core = {r_core}")
+        logger.info(f"r_core[jnp.newaxis, :, jnp.newaxis, :] = {r_core[jnp.newaxis, :, jnp.newaxis, :, :]}") 
+        logger.info(f"r_core.shape={r_core.shape} -> {r_core[jnp.newaxis, :, jnp.newaxis, :].shape}; Rij.shape = {Rij.shape}\n")
+        logger.info(f"Rij = {Rij}\n")
+
+        logger.info(f"q_core = {q_core}") 
+        logger.info(f"q_core[:, jnp.newaxis, :, jnp.newaxis] = {q_core[:, jnp.newaxis, :, jnp.newaxis]}") 
+        logger.info(f"q_shell = {q_shell}") 
+        logger.info(f"q_shell[:, jnp.newaxis, :, jnp.newaxis] = {q_shell[:, jnp.newaxis, :, jnp.newaxis]}\n")
+
+        logger.info(f"Qi_shell = {Qi_shell}") 
+        logger.info(f"Qj_shell = {Qj_shell}") 
+        logger.info(f"Qi_core = {Qi_core}") 
+        logger.info(f"Qj_core = {Qj_core}\n")
+        logger.info(f"q_core.shape={q_core.shape} -> Qi_core.shape={Qi_core.shape} & Qj_core.shape = {Qj_core.shape}\n")
+
+
+        logger.info(f"Dij = {Dij}\n")
+
+        logger.info(f"Thole Screening and Polarization!!") 
+        logger.info(f"k = {k}") 
+        logger.info(f"_alphas = {_alphas}") 
+        logger.info(f"tholes = {tholes}") 
+        logger.info(f"u_scale = {u_scale}") 
+        logger.info(f"") 
+        logger.info("%%%%%%%%%%%%%%%%%%%%%% Printing polarization.py elements %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
 
         return (
             Rij,

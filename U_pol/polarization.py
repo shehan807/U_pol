@@ -129,7 +129,7 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=Non
 
     U_pol = Upol(Dij, k)
     U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale)
-    logger.debug(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
+    logger.info(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
 
     return U_pol + U_coul
 
