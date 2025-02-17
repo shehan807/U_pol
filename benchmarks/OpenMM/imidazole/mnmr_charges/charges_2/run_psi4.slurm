@@ -18,7 +18,7 @@ source activate p4env
 # export myscratch=~/scratch/psi4.$PBS_JOBID
 # export PSI_SCRATCH=$myscratch
 # mkdir -p $PSI_SCRATCH
-# 
+#
 # export PSIDATADIR=""
 # export PSIDATADIR=~/.conda/envs/psi4_v1.6/share/psi4/
 

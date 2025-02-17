@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 #******************** perl script for psi4 dma output to pull multipole moments
-#******************* 
+#*******************
 #*******************   IMPORTANT:  Units should all be A.U., we need to convert coordinates from Angstrom to Bohr
 $conv=1.88973;
 
@@ -13,7 +13,7 @@ do { $_=<ifile> } until(/Multipole moments/);
 @atomtype;@xyz;
 $i=0;
 while(<ifile>)
-{ 
+{
 $_=<ifile>;
 if (/Total/){last}
 @array=split; push( @atomtype , $array[0] );
@@ -47,5 +47,5 @@ for(my$j=0;$j<5;$j++)
 }
 print"\n";
 }
- $i++;   
+ $i++;
 }
