@@ -24,10 +24,10 @@ def set_constants():
 
 
 # @jit
-def Upol(Dij, k):
+def Uself(Dij, k):
     """
-    Calculates polarization energy,
-    U_pol = 1/2 Σ k_i * ||d_mag_i||^2.
+    Calculates self energy,
+    U_self = 1/2 Σ k_i * ||d_mag_i||^2.
 
     Arguments:
     <np.array> Dij
@@ -36,15 +36,37 @@ def Upol(Dij, k):
         array of harmonic spring constants for core/shell pairs
 
     Returns:
-    <np.float> Upol
+    <np.float> Uself
         polarization energy
     """
     d_mag = safe_norm(Dij, 0.0, axis=2)
     return 0.5 * jnp.sum(k * d_mag**2)
 
+# @jit
+def Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core):
+
+    # use where solution to enable nan-friendly gradients
+    Rij_norm = safe_norm(Rij, 0.0, axis=-1)
+
+    # allow divide by zero
+    _Rij_norm = jnp.where(Rij_norm == 0.0, jnp.inf, Rij_norm)
+
+    U_coul_static = (
+        (Qi_core + Qi_shell) * (Qj_core + Qj_shell) / _Rij_norm
+    )
+    
+    # remove intramolecular contributions
+    I = jnp.eye(U_coul_static.shape[0])
+    mask = (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    U_coul_static = U_coul_static * mask
+    U_coul_static = (
+        0.5 * jnp.where(jnp.isfinite(U_coul_static), U_coul_static, 0).sum()
+    )  # might work in jax
+
+    return ONE_4PI_EPS0 * (U_coul_static)
 
 # @jit
-def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, bondedMask):
+def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
     Di = Dij[:, jnp.newaxis, :, jnp.newaxis, :]
     Dj = Dij[jnp.newaxis, :, jnp.newaxis, :, :]
 
@@ -68,6 +90,7 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, bondedMask):
         -u_scale * Rij_Di_Dj_norm
     )
 
+    # total coulomb energy
     U_coul = (
         Qi_core * Qj_core / _Rij_norm
         + Qi_shell * Qj_core / _Rij_Di_norm
@@ -94,42 +117,23 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, bondedMask):
     )  # might work in jax
 
     # remove diagonal (intramolecular) components
+    # note, this ignores ALL nonbonded interactions for 
+    # bonded atoms (i.e., 1-5, 1-6, etc.)
     I = jnp.eye(U_coul.shape[0])
-    logger.info("%%%%%%%%%%%%%%% CHECKING U_COUL_INTER %%%%%%%%%%%%")
-    logger.info(f"U_coul_inter (before) = {U_coul}")
-    mask1 = (1 - I[:, :, jnp.newaxis, jnp.newaxis])
-    print(f"mask1.shape={mask1.shape}")
-    print(f"bondedMask.shape={bondedMask.shape}")
-    print(f"Ucoul.shape={U_coul.shape}")
-    
-
-    U_coul_inter1 = U_coul * bondedMask
-    U_coul_inter = U_coul * mask1 # bondedMask
-    print(f"U_coul_inter={U_coul_inter}; U_coul_inter1={U_coul_inter1}")
-    U_coul_inter1 = (
-        0.5 * jnp.where(jnp.isfinite(U_coul_inter1), U_coul_inter1, 0).sum()
-    )  # might work in jax
-    #logger.info(f"U_coul_inter (after) = {U_coul_inter1}")
-
-    #nmols, _, natoms, _ = U_coul.shape  # e.g. (3, 9, 3)
-    #I_2D = jnp.eye(nmols)  # shape (nmols, nmols)
-    #I_4D = jnp.tile(I_2D[:, :, None, None], (1, 1, natoms, natoms))
-    #finalMask = (1.0 - I_4D) + I_4D * bondedMask
-    #print(U_coul_inter1.shape, U_coul_inter.shape)
-    #print(U_coul_inter1 - U_coul_inter)
-    #print(U_coul_inter1, U_coul_inter)
+    mask = (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    U_coul_inter = U_coul * mask
     U_coul_inter = (
         0.5 * jnp.where(jnp.isfinite(U_coul_inter), U_coul_inter, 0).sum()
     )  # might work in jax
-    print(f"U_coul_inter={U_coul_inter}; U_coul_inter1={U_coul_inter1}")
-    return ONE_4PI_EPS0 * (U_coul_inter1+ U_coul_intra)
+    
+    return ONE_4PI_EPS0 * (U_coul_inter + U_coul_intra)
 
 
 # @jit
-def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, bondedMask, reshape=None):
+def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=None):
     """
     calculates total induction energy,
-    U_ind = Upol + Uuu + Ustat.
+    U_ind = Uself + Uuu + Ustat.
 
     Arguments:
     <np.array> r
@@ -150,11 +154,14 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, bondedMask,
             Dij, reshape
         )  # specifically to resolve scipy.optimize handling of 1D arrays
 
-    U_pol = Upol(Dij, k)
-    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, bondedMask)
-    logger.info(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
+    U_self = Uself(Dij, k)
+    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale)
+    U_coul_static = Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core)
+    U_ind = U_coul - U_coul_static + U_self
+    logger.info(f"U_self = {U_self} kJ/mol\nU_coul = {U_coul} kJ/mol\n")
+    logger.info(f"U_coul_static = {U_coul_static} kJ/mol\nU_ind = {U_ind} kJ/mol\n")
 
-    return U_pol + U_coul
+    return U_self + U_coul
 
 
 # @jit
@@ -167,7 +174,6 @@ def drudeOpt(
     Qj_core,
     u_scale,
     k,
-    bondedMask,
     methods=["BFGS"],
     d_ref=None,
     reshape=None,
@@ -180,7 +186,7 @@ def drudeOpt(
     from jaxopt import BFGS
 
     Uind_min = lambda Dij: Uind(
-        Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, bondedMask, reshape
+        Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape
     )
 
     for method in methods:
@@ -214,7 +220,7 @@ def main():
     set_constants()
 
     parser = argparse.ArgumentParser(
-        description="Calculate U_ind = U_pol + U_es for a selected molecule."
+        description="Calculate U_ind = U_self + U_es for a selected molecule."
     )
     parser.add_argument(
         "--mol",
@@ -244,8 +250,7 @@ def main():
     logger.info(f"%%%%%%%%%%% STARTING {mol.upper()} U_IND CALCULATION %%%%%%%%%%%%")
     logger.info("-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
 
-    Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm, bondedMask = get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
-    print(bondedMask)
+    Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
     Dij = drudeOpt(
         Rij,
         jnp.ravel(Dij),
@@ -255,12 +260,11 @@ def main():
         Qj_core,
         u_scale,
         k,
-        bondedMask,
         reshape=Dij.shape,
     )
-    U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, bondedMask)
-    logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
-    logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
+    U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
+    logger.info(f"OpenMM U_ind = {Uind_openmm:.7f} kJ/mol")
+    logger.info(f"Python U_ind = {U_ind:.7f} kJ/mol")
     logger.info(f"{abs((Uind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
     logger.info(
         "=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n"
