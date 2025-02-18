@@ -101,14 +101,14 @@ def get_inputs(scf="openmm", **kwargs):
             # ---------DEBUGGING EXCLUSIONS COMPARISON---------------
             nonbonded = [f for f in system.getForces() if isinstance(f, NonbondedForce)][0]
             # Add exceptions for ALL intramolecular pairs in a residue
-            for residue in modeller.getTopology().residues():
-                atom_indices = [ atom.index for atom in residue.atoms() ]
-                for i in range(len(atom_indices)):
-                    for j in range(i+1, len(atom_indices)):
-                        i_global = atom_indices[i]
-                        j_global = atom_indices[j]
-                        # Force the Coulomb & LJ to zero for i-j
-                        nonbonded.addException(i_global, j_global, 0.0, 1.0, 0.0, True)
+            #for residue in modeller.getTopology().residues():
+            #    atom_indices = [ atom.index for atom in residue.atoms() ]
+            #    for i in range(len(atom_indices)):
+            #        for j in range(i+1, len(atom_indices)):
+            #            i_global = atom_indices[i]
+            #            j_global = atom_indices[j]
+            #            # Force the Coulomb & LJ to zero for i-j
+            #            nonbonded.addException(i_global, j_global, 0.0, 1.0, 0.0, True)
             
             # Optionally turn off tail corrections as well:
             # nonbonded.setUseDispersionCorrection(False)
@@ -291,6 +291,56 @@ def get_inputs(scf="openmm", **kwargs):
         q_shell = jnp.array(q_shell)
         alphas = jnp.array(alphas)
         
+
+        # ============ BUILD the 4D 'bondedMask' FROM NONBONDED EXCEPTIONS =============
+        # We want shape: (nmol, nmol, natoms, natoms)
+        # Initialize all ones so everything is included unless we find an exception
+        nmol, natoms, _ = r_core.shape
+        bondedMask = jnp.ones((nmol, nmol, natoms, natoms), dtype=jnp.float64)
+        
+        for mol in range(nmol):
+            for atom in range(natoms):
+                bondedMask = bondedMask.at[mol, mol, atom, atom].set(0.0)
+
+        # We'll parse the exceptions. Each exception is (p1, p2, chargeProd, sigma, epsilon).
+        # We need to figure out which residue p1 belongs to, local index in that residue, etc.
+
+        # A handy function to map a global atom index -> (resID, localAtomID)
+        # based on your r_core ordering. We assume each residue is natoms in size:
+        def map_global_index(idx):
+            resID = idx // natoms   # which residue
+            localID = idx % natoms
+            return (resID, localID)
+
+        # But in your code, you have the "Topology" that might place them in residue i in the order they appear.
+        # For a robust approach, you can build an array global_to_resid[...] earlier. For simplicity:
+        #   If each residue has 'natoms' real atoms in order, the above is enough.
+        #   If your code does something else, you need the actual mapping.
+
+        for ex_idx in range(nonbonded.getNumExceptions()):
+            (p1, p2, cprod, sig, eps) = nonbonded.getExceptionParameters(ex_idx)
+            # figure out which residue each belongs to
+            (res1, loc1) = map_global_index(p1)
+            (res2, loc2) = map_global_index(p2)
+
+            # If cprod=0 and eps=0 => it's a full exclusion. 
+            # If cprod !=0 => might be partial scale factor (like 1-4 interactions).
+            # For demonstration, let's do:
+            if abs(cprod.value_in_unit(elementary_charge**2)) < 1e-12 and abs(eps.value_in_unit(kilojoule_per_mole)) < 1e-12:
+                # fully excluded => set mask=0
+                bondedMask = bondedMask.at[res1, res2, loc1, loc2].set(0.0)
+                bondedMask = bondedMask.at[res2, res1, loc2, loc1].set(0.0)
+            else:
+                # Example if it's 1-4 scale, you might do e.g. 0.5 
+                # This depends on your forcefield. Or you can read the ratio from cprod/(q1*q2).
+                # We'll just log it for demonstration:
+                logger.info(f"Partial exclusion or 1-4 scale found: ex_idx={ex_idx}, p1={p1}, p2={p2}, cprod={cprod}, eps={eps}")
+                # Example: set them to 0.5
+                scale_factor = 0.5
+                bondedMask = bondedMask.at[res1, res2, loc1, loc2].set(scale_factor)
+                bondedMask = bondedMask.at[res2, res1, loc2, loc1].set(scale_factor)
+            logger.info(f"bondMask={bondedMask}")
+
         _alphas = jnp.where(alphas == 0.0, jnp.inf, alphas)
         k = jnp.where(alphas == 0.0, 0.0, ONE_4PI_EPS0 * q_shell**2 / _alphas)
 
@@ -358,6 +408,7 @@ def get_inputs(scf="openmm", **kwargs):
             u_scale,
             k,
             Uind_openmm.value_in_unit(kilojoules_per_mole),
+            bondedMask,
         )
 
 

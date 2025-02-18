@@ -44,7 +44,7 @@ def Upol(Dij, k):
 
 
 # @jit
-def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
+def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, bondedMask):
     Di = Dij[:, jnp.newaxis, :, jnp.newaxis, :]
     Dj = Dij[jnp.newaxis, :, jnp.newaxis, :, :]
 
@@ -95,15 +95,38 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
 
     # remove diagonal (intramolecular) components
     I = jnp.eye(U_coul.shape[0])
-    U_coul_inter = U_coul * (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    logger.info("%%%%%%%%%%%%%%% CHECKING U_COUL_INTER %%%%%%%%%%%%")
+    logger.info(f"U_coul_inter (before) = {U_coul}")
+    mask1 = (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    print(f"mask1.shape={mask1.shape}")
+    print(f"bondedMask.shape={bondedMask.shape}")
+    print(f"Ucoul.shape={U_coul.shape}")
+    
+
+    U_coul_inter1 = U_coul * bondedMask
+    U_coul_inter = U_coul * mask1 # bondedMask
+    print(f"U_coul_inter={U_coul_inter}; U_coul_inter1={U_coul_inter1}")
+    U_coul_inter1 = (
+        0.5 * jnp.where(jnp.isfinite(U_coul_inter1), U_coul_inter1, 0).sum()
+    )  # might work in jax
+    #logger.info(f"U_coul_inter (after) = {U_coul_inter1}")
+
+    #nmols, _, natoms, _ = U_coul.shape  # e.g. (3, 9, 3)
+    #I_2D = jnp.eye(nmols)  # shape (nmols, nmols)
+    #I_4D = jnp.tile(I_2D[:, :, None, None], (1, 1, natoms, natoms))
+    #finalMask = (1.0 - I_4D) + I_4D * bondedMask
+    #print(U_coul_inter1.shape, U_coul_inter.shape)
+    #print(U_coul_inter1 - U_coul_inter)
+    #print(U_coul_inter1, U_coul_inter)
     U_coul_inter = (
         0.5 * jnp.where(jnp.isfinite(U_coul_inter), U_coul_inter, 0).sum()
     )  # might work in jax
-    return ONE_4PI_EPS0 * (U_coul_inter + U_coul_intra)
+    print(f"U_coul_inter={U_coul_inter}; U_coul_inter1={U_coul_inter1}")
+    return ONE_4PI_EPS0 * (U_coul_inter1+ U_coul_intra)
 
 
 # @jit
-def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=None):
+def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, bondedMask, reshape=None):
     """
     calculates total induction energy,
     U_ind = Upol + Uuu + Ustat.
@@ -128,7 +151,7 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=Non
         )  # specifically to resolve scipy.optimize handling of 1D arrays
 
     U_pol = Upol(Dij, k)
-    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale)
+    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, bondedMask)
     logger.info(f"U_pol = {U_pol} kJ/mol\nU_coul = {U_coul}\n")
 
     return U_pol + U_coul
@@ -144,6 +167,7 @@ def drudeOpt(
     Qj_core,
     u_scale,
     k,
+    bondedMask,
     methods=["BFGS"],
     d_ref=None,
     reshape=None,
@@ -156,7 +180,7 @@ def drudeOpt(
     from jaxopt import BFGS
 
     Uind_min = lambda Dij: Uind(
-        Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape
+        Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, bondedMask, reshape
     )
 
     for method in methods:
@@ -220,9 +244,8 @@ def main():
     logger.info(f"%%%%%%%%%%% STARTING {mol.upper()} U_IND CALCULATION %%%%%%%%%%%%")
     logger.info("-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
 
-    Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = (
-        get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
-    )
+    Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm, bondedMask = get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
+    print(bondedMask)
     Dij = drudeOpt(
         Rij,
         jnp.ravel(Dij),
@@ -232,9 +255,10 @@ def main():
         Qj_core,
         u_scale,
         k,
+        bondedMask,
         reshape=Dij.shape,
     )
-    U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
+    U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, bondedMask)
     logger.info(f"OpenMM U_ind = {Uind_openmm:.4f} kJ/mol")
     logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
     logger.info(f"{abs((Uind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
