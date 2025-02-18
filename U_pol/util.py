@@ -97,6 +97,23 @@ def get_inputs(scf="openmm", **kwargs):
             for i in range(system.getNumForces()):
                 f = system.getForce(i)
                 f.setForceGroup(i)
+            
+            # ---------DEBUGGING EXCLUSIONS COMPARISON---------------
+            nonbonded = [f for f in system.getForces() if isinstance(f, NonbondedForce)][0]
+            # Add exceptions for ALL intramolecular pairs in a residue
+            for residue in modeller.getTopology().residues():
+                atom_indices = [ atom.index for atom in residue.atoms() ]
+                for i in range(len(atom_indices)):
+                    for j in range(i+1, len(atom_indices)):
+                        i_global = atom_indices[i]
+                        j_global = atom_indices[j]
+                        # Force the Coulomb & LJ to zero for i-j
+                        nonbonded.addException(i_global, j_global, 0.0, 1.0, 0.0, True)
+            
+            # Optionally turn off tail corrections as well:
+            # nonbonded.setUseDispersionCorrection(False)
+            # ------------------------------------------------------
+
             platform = Platform.getPlatformByName("CUDA")
             simmd = Simulation(modeller.topology, system, integrator, platform)
             simmd.context.setPositions(modeller.positions)
@@ -232,6 +249,9 @@ def get_inputs(scf="openmm", **kwargs):
                                     if core1 >= natoms:
                                         core1 = core1 % natoms
 
+                                    logger.info(f"(core0,natoms)=({core0},{natoms})")
+                                    logger.info(f"(core1,natoms)=({core1},{natoms})")
+                                    
                                     tholeMatrix[imol][core0][core1] = thole / (
                                         alpha0 * alpha1
                                     ) ** (1.0 / 6.0)
@@ -239,6 +259,7 @@ def get_inputs(scf="openmm", **kwargs):
                                         alpha0 * alpha1
                                     ) ** (1.0 / 6.0)
 
+                                    logger.info(f"tholeMatrix = {tholeMatrix}")
                                 tholeMatrix = list(tholeMatrix)
                                 tholeMatrixMade = True
                         elif numScreenedPairs == 0:
