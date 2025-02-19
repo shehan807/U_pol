@@ -10,6 +10,7 @@ from util import *
 import logging
 import jax.numpy as jnp
 import jax
+from jaxopt import BFGS
 from optax import safe_norm
 import argparse
 
@@ -115,7 +116,7 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
     U_coul_intra = (
         0.5 * jnp.where(jnp.isfinite(U_coul_intra), U_coul_intra, 0).sum()
     )  # might work in jax
-
+    
     # remove diagonal (intramolecular) components
     # note, this ignores ALL nonbonded interactions for 
     # bonded atoms (i.e., 1-5, 1-6, etc.)
@@ -183,7 +184,6 @@ def drudeOpt(
     Uind w.r.t d.
 
     """
-    from jaxopt import BFGS
 
     Uind_min = lambda Dij: Uind(
         Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape
@@ -226,7 +226,7 @@ def main():
         "--mol",
         type=str,
         required=True,
-        choices=["water", "acnit", "imidazole", "pyrazole"],
+        choices=["water", "acnit", "imidazole", "imidazole2", "pyrazole"],
         help="Molecule type (with OpenMM files).",
     )
     parser.add_argument(
