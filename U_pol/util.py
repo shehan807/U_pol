@@ -86,6 +86,7 @@ def get_inputs(scf="openmm", **kwargs):
             # use openMM to obtain bond definitions and atom/Drude positions
             Topology().loadBondDefinitions(residue_file)
             integrator = DrudeSCFIntegrator(0.00001 * picoseconds)
+            integrator.setMinimizationErrorTolerance(0.0001)
             integrator.setRandomNumberSeed(123)
             pdb = PDBFile(pdb_file)
             modeller = Modeller(pdb.topology, pdb.positions)
