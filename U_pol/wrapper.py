@@ -209,6 +209,7 @@ def parse_python_log(log_path):
         for line in f:
             if "JAXOPT.BFGS Minimizer completed" in line:
                 end_file = True
+                continue
             if end_file:
                 if "U_ind =" in line and "kJ/mol" in line:
                     parts = line.split()
@@ -224,7 +225,6 @@ def parse_python_log(log_path):
         os.remove(log_path)
     except Exception as e:
         print(f"Warning: could not remove log file {log_path}. Error: {e}")
-
     return val
 
 # Suppose we have as many ATOM lines as you expect from the Dimer geometry
@@ -302,7 +302,7 @@ def main():
                   f"Dimer ID = {dimer_id}")
             sapt_energies.append(sapt_E_ind_kj)
             python_energies.append(python_E_ind_kj)
-            dimer_ids.append(dimer_id)
+            dimer_ids.append(int(dimer_id))
         else:
             print("  Could not parse python induction from log.out.")
 

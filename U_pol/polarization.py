@@ -191,7 +191,7 @@ def drudeOpt(
 
     for method in methods:
         start = time.time()
-        solver = BFGS(fun=Uind_min, tol=0.0001)
+        solver = BFGS(fun=Uind_min, tol=0.0001, verbose=False)
         res = solver.run(init_params=Dij0)
         end = time.time()
         logger.info(f"JAXOPT.BFGS Minimizer completed in {end-start:.3f} seconds!!")
@@ -212,8 +212,9 @@ def main():
     jax.config.update("jax_enable_x64", True)
 
     global logger
-    logging.basicConfig(filename="log.out", level=logging.ERROR, format="%(message)s")
+    logging.basicConfig(filename="log.out", level=logging.INFO, format="%(message)s")
     logging.info(f"Log started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
     # logger.setLevel(logging.DEBUG)
     # logging.getLogger().setLevel(logging.DEBUG)
 

@@ -122,7 +122,6 @@ def get_inputs(scf="openmm", **kwargs):
             ][0]
 
             positions = simmd.context.getState(getPositions=True).getPositions()
-
             # optimize drude positions using OpenMM
             simmd.step(1)
             state = simmd.context.getState(

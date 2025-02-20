@@ -37,6 +37,8 @@ def plot_induction_parity(
     """
     # 1) Read the CSV
     df = pd.read_csv(csv_file)
+    mask = df["DimerID"] > 50
+    df = df[mask]
     x_sapt = df["SAPT_Induction"].values  # (kJ/mol)
     y_md   = df["MD_Induction"].values    # (kJ/mol)
     dimer_id = df["DimerID"].values
@@ -55,7 +57,7 @@ def plot_induction_parity(
         "ytick.labelsize": fontsize * 0.8,
     })
 
-    fig = plt.figure(figsize=(12,8))
+    fig = plt.figure(figsize=(14,8))
     ax = fig.add_subplot(111)
 
     border_width = 1.5
@@ -105,6 +107,10 @@ def plot_induction_parity(
         label=f"±{chemical_accuracy_kj} kJ/mol"
     )
 
+    #ax.set_xlim(-0.003,0.8*max_val)
+    #ax.set_ylim(-0.003,0.8*max_val)
+    #ax.set_xscale('log')
+    #ax.set_yscale('log')
     ax.set_xlim(min_val, max_val)
     ax.set_ylim(min_val, max_val)
 
@@ -112,10 +118,10 @@ def plot_induction_parity(
     text_x = 0.05
     text_y = 0.95
     stat_text = (
-        f"MAE: {mae:.3f} kJ/mol\n"
-        f"RMSE: {rmse:.3f} kJ/mol\n"
-        f"R²: {r2:.3f}\n"
-        f"Max error: {max_error:.3f} kJ/mol"
+        f"MAE: {mae:.5f} kJ/mol\n"
+        f"RMSE: {rmse:.5f} kJ/mol\n"
+        f"R²: {r2:.5f}\n"
+        f"Max error: {max_error:.5f} kJ/mol"
     )
     ax.text(
         text_x, text_y, stat_text,
@@ -126,7 +132,7 @@ def plot_induction_parity(
     )
 
     # 8) Inset: error histogram
-    left, bottom, width, height = 0.55, 0.15, 0.3, 0.2
+    left, bottom, width, height = 0.45, 0.15, 0.3, 0.2
     ax_inset = fig.add_axes([left, bottom, width, height])
     ax_inset.hist(errors, bins=40, color="steelblue", alpha=0.7, edgecolor="k")
     ax_inset.set_title("Error Distribution (MD - SAPT)", fontsize=fontsize*0.7)
@@ -135,6 +141,7 @@ def plot_induction_parity(
     half_range = max(abs(errors.min()), abs(errors.max()), chemical_accuracy_kj*3)
     ax_inset.set_xlim(-half_range, half_range)
     ax_inset.set_yticks([])
+    #ax_inset.set_xscale('symlog', linthresh=1e-2)
 
     ax_inset.axvline(0.0, color='k', linestyle='--', linewidth=1.5)
 
@@ -154,7 +161,7 @@ if __name__ == "__main__":
         csv_file,
         output_png=output_png,
         title="SAPT vs MD Induction Energy Parity (kJ/mol)",
-        chemical_accuracy_kj=0.005,
+        chemical_accuracy_kj=0.00001,
         fontsize=18
     )
 
