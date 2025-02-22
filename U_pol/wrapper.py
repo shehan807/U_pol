@@ -15,7 +15,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import subprocess
 import argparse
-import shutil 
+import shutil
 
 BOHR_TO_ANG = 0.52917721092
 
@@ -76,15 +76,10 @@ END
 
 template_lines = [l for l in TEMPLATE_PDB.splitlines()]
 #!/usr/bin/env python3
-import os
-import re
-import argparse
-import subprocess
-import numpy as np
-import matplotlib.pyplot as plt
 
 # Example constants
 BOHR_TO_ANG = 0.529177210903
+
 
 # 1) parse_sapt_outfile: ensures we only read the *first* Dimer HF geometry
 def parse_sapt_outfile(outfile_path):
@@ -118,20 +113,26 @@ def parse_sapt_outfile(outfile_path):
         # If reading coordinates, watch for lines that signify the geometry block ended
         if reading_coords:
             lower_line = line.lower()
-            if ("monomer" in lower_line and "hf" in lower_line) \
-               or "running in" in lower_line \
-               or "nuclear repulsion" in lower_line \
-               or "rotational constants" in line \
-               or "symmetry" in lower_line \
-               or "set {" in lower_line \
-               or "psi4:" in lower_line:
+            if (
+                ("monomer" in lower_line and "hf" in lower_line)
+                or "running in" in lower_line
+                or "nuclear repulsion" in lower_line
+                or "rotational constants" in line
+                or "symmetry" in lower_line
+                or "set {" in lower_line
+                or "psi4:" in lower_line
+            ):
                 # End of dimer geometry
                 break
 
             # Skip blank lines, table headers, ghost atoms
             if not line.strip():
                 continue
-            if line.strip().startswith("Center") or line.strip().startswith("---") or "Gh(" in line:
+            if (
+                line.strip().startswith("Center")
+                or line.strip().startswith("---")
+                or "Gh(" in line
+            ):
                 continue
 
             parts = line.split()
@@ -163,6 +164,7 @@ def parse_sapt_outfile(outfile_path):
 
     return coords_bohr, induction_kjmol
 
+
 # 2) Minimal-rounding PDB writer
 def write_pdb_from_template(coords_ang, template_lines, out_pdb_path):
     """
@@ -179,11 +181,7 @@ def write_pdb_from_template(coords_ang, template_lines, out_pdb_path):
             atom_count += 1
             # We'll slice up to column 30, then insert coords with 8 decimal places
             new_line = (
-                f"{line[0:30]}"
-                f"{x:8.3f}"
-                f"{y:8.3f}"
-                f"{z:8.3f}"
-                f"{line[54:]}"
+                f"{line[0:30]}" f"{x:8.3f}" f"{y:8.3f}" f"{z:8.3f}" f"{line[54:]}"
             )
             out_lines.append(new_line)
         else:
@@ -191,8 +189,9 @@ def write_pdb_from_template(coords_ang, template_lines, out_pdb_path):
     with open(out_pdb_path, "w") as fo:
         fo.write("\n".join(out_lines) + "\n")
 
+
 # 3) parse_python_log, a placeholder that returns a float if found
-import os
+
 
 def parse_python_log(log_path):
     """
@@ -227,17 +226,31 @@ def parse_python_log(log_path):
         print(f"Warning: could not remove log file {log_path}. Error: {e}")
     return val
 
+
 # Suppose we have as many ATOM lines as you expect from the Dimer geometry
-pdb_atom_lines = [ln for ln in template_lines if ln.startswith("ATOM") or ln.startswith("HETATM")]
+pdb_atom_lines = [
+    ln for ln in template_lines if ln.startswith("ATOM") or ln.startswith("HETATM")
+]
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Wrapper for SAPT DFT vs. MD induction energies.")
-    parser.add_argument("--indir", type=str, default=".",
-                        help="Directory with .out files to parse")
-    parser.add_argument("--poldir", type=str, default=".",
-                        help="Directory where polarization.py is located (if needed).")
-    parser.add_argument("--no-run", action="store_true",
-                        help="If set, skip calling polarization.py; parse existing log.outs only.")
+    parser = argparse.ArgumentParser(
+        description="Wrapper for SAPT DFT vs. MD induction energies."
+    )
+    parser.add_argument(
+        "--indir", type=str, default=".", help="Directory with .out files to parse"
+    )
+    parser.add_argument(
+        "--poldir",
+        type=str,
+        default=".",
+        help="Directory where polarization.py is located (if needed).",
+    )
+    parser.add_argument(
+        "--no-run",
+        action="store_true",
+        help="If set, skip calling polarization.py; parse existing log.outs only.",
+    )
     args = parser.parse_args()
 
     outfiles = sorted([f for f in os.listdir(args.indir) if f.endswith(".out")])
@@ -267,11 +280,16 @@ def main():
             continue
 
         # Convert geometry to Å
-        coords_ang = [(x_b * BOHR_TO_ANG, y_b * BOHR_TO_ANG, z_b * BOHR_TO_ANG) for (x_b,y_b,z_b) in coords_bohr]
+        coords_ang = [
+            (x_b * BOHR_TO_ANG, y_b * BOHR_TO_ANG, z_b * BOHR_TO_ANG)
+            for (x_b, y_b, z_b) in coords_bohr
+        ]
 
         # Check # of coords vs # of ATOM lines in the template
         if len(coords_ang) != len(pdb_atom_lines):
-            print(f"  -> WARNING: mismatch in # of parsed atoms vs. template lines. Skipping.")
+            print(
+                "  -> WARNING: mismatch in # of parsed atoms vs. template lines. Skipping."
+            )
             continue
 
         # Write new PDB
@@ -287,7 +305,8 @@ def main():
             cmd = [
                 "python",
                 os.path.join(args.poldir, "polarization.py"),
-                "--mol", "imidazole3",
+                "--mol",
+                "imidazole3",
             ]
             print("Running:", " ".join(cmd))
             subprocess.run(cmd, check=True)
@@ -297,9 +316,11 @@ def main():
         python_E_ind_kj = parse_python_log(pol_log)
 
         if python_E_ind_kj is not None:
-            print(f"  SAPT induction = {sapt_E_ind_kj:.6f} kJ/mol, "
-                  f"Python induction = {python_E_ind_kj:.6f} kJ/mol, "
-                  f"Dimer ID = {dimer_id}")
+            print(
+                f"  SAPT induction = {sapt_E_ind_kj:.6f} kJ/mol, "
+                f"Python induction = {python_E_ind_kj:.6f} kJ/mol, "
+                f"Dimer ID = {dimer_id}"
+            )
             sapt_energies.append(sapt_E_ind_kj)
             python_energies.append(python_E_ind_kj)
             dimer_ids.append(int(dimer_id))
@@ -312,14 +333,20 @@ def main():
         python_energies = np.array(python_energies)
         dimer_ids = np.array(dimer_ids)
 
-        plt.figure(figsize=(6,6))
-        sc = plt.scatter(sapt_energies, python_energies, c=dimer_ids,
-                         cmap='viridis', alpha=0.8, edgecolors='k')
+        plt.figure(figsize=(6, 6))
+        sc = plt.scatter(
+            sapt_energies,
+            python_energies,
+            c=dimer_ids,
+            cmap="viridis",
+            alpha=0.8,
+            edgecolors="k",
+        )
 
         # y=x line
         min_val = min(sapt_energies.min(), python_energies.min()) * 1.05
         max_val = max(sapt_energies.max(), python_energies.max()) * 1.05
-        plt.plot([min_val, max_val], [min_val, max_val], 'k--', label='y = x')
+        plt.plot([min_val, max_val], [min_val, max_val], "k--", label="y = x")
         plt.xlim(min_val, max_val)
         plt.ylim(min_val, max_val)
 
@@ -337,15 +364,17 @@ def main():
         plt.savefig("sapt_vs_python_induction.png", dpi=150)
         plt.show()
 
-        np.savetxt("induction_data.csv",
-                   np.column_stack([sapt_energies, python_energies, dimer_ids]),
-                   delimiter=",",
-                   header="SAPT_Induction,MD_Induction,DimerID",
-                   comments="")
+        np.savetxt(
+            "induction_data.csv",
+            np.column_stack([sapt_energies, python_energies, dimer_ids]),
+            delimiter=",",
+            header="SAPT_Induction,MD_Induction,DimerID",
+            comments="",
+        )
 
     else:
         print("No induction energies collected; nothing to plot.")
 
+
 if __name__ == "__main__":
     main()
-

@@ -98,14 +98,16 @@ def get_inputs(scf="openmm", **kwargs):
             for i in range(system.getNumForces()):
                 f = system.getForce(i)
                 f.setForceGroup(i)
-            
+
             # --------- EXCLUSIONS COMPARISON---------------
-            nonbonded = [f for f in system.getForces() if isinstance(f, NonbondedForce)][0]
+            nonbonded = [
+                f for f in system.getForces() if isinstance(f, NonbondedForce)
+            ][0]
             # Add exceptions for ALL intramolecular pairs in a residue
             for residue in modeller.getTopology().residues():
-                atom_indices = [ atom.index for atom in residue.atoms() ]
+                atom_indices = [atom.index for atom in residue.atoms()]
                 for i in range(len(atom_indices)):
-                    for j in range(i+1, len(atom_indices)):
+                    for j in range(i + 1, len(atom_indices)):
                         i_global = atom_indices[i]
                         j_global = atom_indices[j]
                         # Force the Coulomb & LJ to zero for i-j
@@ -226,7 +228,7 @@ def get_inputs(scf="openmm", **kwargs):
                                     core1 = prt1_params[1]
                                     alpha1 = prt1_params[6].value_in_unit(nanometer**3)
                                     thole = screened_params[2]
-                                    
+
                                     if core0 >= natoms:
                                         core0 = core0 % natoms
                                     if core1 >= natoms:
@@ -269,7 +271,7 @@ def get_inputs(scf="openmm", **kwargs):
         q_core = jnp.array(q_core)
         q_shell = jnp.array(q_shell)
         alphas = jnp.array(alphas)
-        
+
         _alphas = jnp.where(alphas == 0.0, jnp.inf, alphas)
         k = jnp.where(alphas == 0.0, 0.0, ONE_4PI_EPS0 * q_shell**2 / _alphas)
 
@@ -310,6 +312,7 @@ def get_inputs(scf="openmm", **kwargs):
             k,
             Uind_openmm.value_in_unit(kilojoules_per_mole),
         )
+
 
 def get_raw_inputs(simmd, system, nonbonded_force, drude_force):
     positions = simmd.context.getState(getPositions=True).getPositions()

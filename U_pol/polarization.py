@@ -43,28 +43,27 @@ def Uself(Dij, k):
     d_mag = safe_norm(Dij, 0.0, axis=2)
     return 0.5 * jnp.sum(k * d_mag**2)
 
+
 # @jit
 def Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core):
-
     # use where solution to enable nan-friendly gradients
     Rij_norm = safe_norm(Rij, 0.0, axis=-1)
 
     # allow divide by zero
     _Rij_norm = jnp.where(Rij_norm == 0.0, jnp.inf, Rij_norm)
 
-    U_coul_static = (
-        (Qi_core + Qi_shell) * (Qj_core + Qj_shell) / _Rij_norm
-    )
-    
+    U_coul_static = (Qi_core + Qi_shell) * (Qj_core + Qj_shell) / _Rij_norm
+
     # remove intramolecular contributions
     I = jnp.eye(U_coul_static.shape[0])
-    mask = (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    mask = 1 - I[:, :, jnp.newaxis, jnp.newaxis]
     U_coul_static = U_coul_static * mask
     U_coul_static = (
         0.5 * jnp.where(jnp.isfinite(U_coul_static), U_coul_static, 0).sum()
     )  # might work in jax
 
     return ONE_4PI_EPS0 * (U_coul_static)
+
 
 # @jit
 def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
@@ -116,17 +115,17 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
     U_coul_intra = (
         0.5 * jnp.where(jnp.isfinite(U_coul_intra), U_coul_intra, 0).sum()
     )  # might work in jax
-    
+
     # remove diagonal (intramolecular) components
-    # note, this ignores ALL nonbonded interactions for 
+    # note, this ignores ALL nonbonded interactions for
     # bonded atoms (i.e., 1-5, 1-6, etc.)
     I = jnp.eye(U_coul.shape[0])
-    mask = (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    mask = 1 - I[:, :, jnp.newaxis, jnp.newaxis]
     U_coul_inter = U_coul * mask
     U_coul_inter = (
         0.5 * jnp.where(jnp.isfinite(U_coul_inter), U_coul_inter, 0).sum()
     )  # might work in jax
-    
+
     return ONE_4PI_EPS0 * (U_coul_inter + U_coul_intra)
 
 
@@ -227,7 +226,7 @@ def main():
         "--mol",
         type=str,
         required=True,
-        choices=["water", "acnit", "imidazole", "imidazole2", "imidazole3", "pyrazole"],
+        choices=["water", "acnit", "imidazole", "imidazole2", "imidazole3", "pyrazine"],
         help="Molecule type (with OpenMM files).",
     )
     parser.add_argument(
@@ -251,7 +250,9 @@ def main():
     logger.info(f"%%%%%%%%%%% STARTING {mol.upper()} U_IND CALCULATION %%%%%%%%%%%%")
     logger.info("-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
 
-    Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
+    Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = (
+        get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
+    )
     Dij = drudeOpt(
         Rij,
         jnp.ravel(Dij),

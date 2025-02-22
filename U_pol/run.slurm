@@ -2,7 +2,7 @@
 #SBATCH -A gts-jmcdaniel43-chemx
 #SBATCH --job-name=SAPTvsMD
 #SBATCH --time=24:00:00
-#SBATCH -N1 --gres=gpu:V100:1 --gres-flags=enforce-binding 
+#SBATCH -N1 --gres=gpu:V100:1 --gres-flags=enforce-binding
 #SBATCH --mem-per-gpu=32G
 #SBATCH -qinferno
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -16,9 +16,9 @@ module load anaconda3
 # fill this in with your OpenMM conda environment
 conda activate jax_openmm
 
-python wrapper.py --indir /storage/home/hcoda1/4/sparmar32/p-jmcdaniel43-0/scripts/U_pol/benchmarks/OpenMM/imidazole3/imidazole/imidazole > wrapper.out 
+python wrapper.py --indir /storage/home/hcoda1/4/sparmar32/p-jmcdaniel43-0/scripts/U_pol/benchmarks/OpenMM/imidazole3/imidazole/imidazole > wrapper.out
 
-python plot_sapt_md.py 
+python plot_sapt_md.py
 
 end=`date +%s`
 echo "Done   " `date`
