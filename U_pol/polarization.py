@@ -10,6 +10,7 @@ from util import *
 import logging
 import jax.numpy as jnp
 import jax
+from jax import jit
 from jaxopt import BFGS
 from optax import safe_norm
 import argparse
@@ -23,127 +24,115 @@ def set_constants():
     EPSILON0 = 1e-6 * 8.8541878128e-12 / (E_CHARGE * E_CHARGE * AVOGADRO)
     ONE_4PI_EPS0 = 1 / (4 * M_PI * EPSILON0)
 
+@jit
+def make_Sij(Rij, u_scale):
+    """Build Thole screening function for intra-molecular dipole-dipole interactions."""
+    Rij_norm = safe_norm(Rij, 0.0, axis=-1)
+    return 1.0 - (1.0 + 0.5 * Rij_norm * u_scale) * jnp.exp(-u_scale * Rij_norm)
 
-# @jit
+@jit
+def jnp_denominator_norm(X):
+    """Enable nan-friendly gradients & divide by zero"""
+    X_norm = safe_norm(X, 0.0, axis=-1)
+    return jnp.where(X_norm == 0.0, jnp.inf, X_norm)
+
+@jit
+def safe_sum(X):
+    """Enable safe sum for jnp matrices with infty."""
+    return jnp.where(jnp.isfinite(X), X, 0).sum()
+
+@jit
 def Uself(Dij, k):
-    """
-    Calculates self energy,
-    U_self = 1/2 Σ k_i * ||d_mag_i||^2.
-
-    Arguments:
-    <np.array> Dij
-        array of displacements between core and shell sites
-    <np.array> k
-        array of harmonic spring constants for core/shell pairs
-
-    Returns:
-    <np.float> Uself
-        polarization energy
-    """
+    """Calculates self energy, 1/2 Σ k_i * ||d_mag_i||^2."""
     d_mag = safe_norm(Dij, 0.0, axis=2)
     return 0.5 * jnp.sum(k * d_mag**2)
 
-
-# @jit
+@jit
 def Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core):
-    # use where solution to enable nan-friendly gradients
-    Rij_norm = safe_norm(Rij, 0.0, axis=-1)
-
-    # allow divide by zero
-    _Rij_norm = jnp.where(Rij_norm == 0.0, jnp.inf, Rij_norm)
-
-    U_coul_static = (Qi_core + Qi_shell) * (Qj_core + Qj_shell) / _Rij_norm
+    """Compute static Coulomb energy, i.e., Q = Q_core + Q_Drude.""" 
+    Rij_norm = jnp_denominator_norm(Rij)           
+    U_coul_static = (Qi_core + Qi_shell) * (Qj_core + Qj_shell) / Rij_norm
 
     # remove intramolecular contributions
     I = jnp.eye(U_coul_static.shape[0])
-    mask = 1 - I[:, :, jnp.newaxis, jnp.newaxis]
-    U_coul_static = U_coul_static * mask
-    U_coul_static = (
-        0.5 * jnp.where(jnp.isfinite(U_coul_static), U_coul_static, 0).sum()
-    )  # might work in jax
+    U_coul_static = U_coul_static * (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    U_coul_static = 0.5 * safe_sum(U_coul_static)
 
-    return ONE_4PI_EPS0 * (U_coul_static)
+    return ONE_4PI_EPS0 * U_coul_static
 
-
-# @jit
+@jit
 def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
+    """Compute total inter- and intra-molecular Coulomb energy.""" 
+
+    # build denominator rij terms 
     Di = Dij[:, jnp.newaxis, :, jnp.newaxis, :]
     Dj = Dij[jnp.newaxis, :, jnp.newaxis, :, :]
+    Rij_norm       = jnp_denominator_norm(Rij)           
+    Rij_Di_norm    = jnp_denominator_norm(Rij + Di)      
+    Rij_Dj_norm    = jnp_denominator_norm(Rij - Dj)      
+    Rij_Di_Dj_norm = jnp_denominator_norm(Rij + Di - Dj) 
 
-    # use where solution to enable nan-friendly gradients
-    Rij_norm = safe_norm(Rij, 0.0, axis=-1)
-    Rij_Di_norm = safe_norm(Rij + Di, 0.0, axis=-1)
-    Rij_Dj_norm = safe_norm(Rij - Dj, 0.0, axis=-1)
-    Rij_Di_Dj_norm = safe_norm(Rij + Di - Dj, 0.0, axis=-1)
+    # build Thole screening matrices
+    Sij       = make_Sij(Rij, u_scale)       
+    Sij_Di    = make_Sij(Rij + Di, u_scale)    
+    Sij_Dj    = make_Sij(Rij - Dj, u_scale)    
+    Sij_Di_Dj = make_Sij(Rij + Di - Dj, u_scale) 
 
-    # allow divide by zero
-    _Rij_norm = jnp.where(Rij_norm == 0.0, jnp.inf, Rij_norm)
-    _Rij_Di_norm = jnp.where(Rij_Di_norm == 0.0, jnp.inf, Rij_Di_norm)
-    _Rij_Dj_norm = jnp.where(Rij_Dj_norm == 0.0, jnp.inf, Rij_Dj_norm)
-    _Rij_Di_Dj_norm = jnp.where(Rij_Di_Dj_norm == 0.0, jnp.inf, Rij_Di_Dj_norm)
-
-    # Rij_norm = safe_norm(Rij, 0.0, axis=-1)
-    Sij = 1.0 - (1.0 + 0.5 * Rij_norm * u_scale) * jnp.exp(-u_scale * Rij_norm)
-    Sij_Di = 1.0 - (1.0 + 0.5 * Rij_Di_norm * u_scale) * jnp.exp(-u_scale * Rij_Di_norm)
-    Sij_Dj = 1.0 - (1.0 + 0.5 * Rij_Dj_norm * u_scale) * jnp.exp(-u_scale * Rij_Dj_norm)
-    Sij_Di_Dj = 1.0 - (1.0 + 0.5 * Rij_Di_Dj_norm * u_scale) * jnp.exp(
-        -u_scale * Rij_Di_Dj_norm
+    # compute intermolecular Coulomb matrix
+    U_coul_inter = (
+            Qi_core  * Qj_core  / Rij_norm
+          + Qi_shell * Qj_core  / Rij_Di_norm
+          + Qi_core  * Qj_shell / Rij_Dj_norm
+          + Qi_shell * Qj_shell / Rij_Di_Dj_norm
     )
+    # remove diagonal (intramolecular) components
+    # NOTE: ignores ALL nonbonded interactions for bonded atoms (i.e., 1-5, 1-6, etc.)
+    I = jnp.eye(U_coul_inter.shape[0])
+    U_coul_inter = U_coul_inter * (1 - I[:, :, jnp.newaxis, jnp.newaxis])
 
-    # total coulomb energy
-    U_coul = (
-        Qi_core * Qj_core / _Rij_norm
-        + Qi_shell * Qj_core / _Rij_Di_norm
-        + Qi_core * Qj_shell / _Rij_Dj_norm
-        + Qi_shell * Qj_shell / _Rij_Di_Dj_norm
-    )
-
-    # trying with safe_norm
+    # compute intramolecular Coulomb matrix (of screened dipole-dipole pairs)
     U_coul_intra = (
-        Sij * -Qi_shell * -Qj_shell / _Rij_norm
-        + Sij_Di * Qi_shell * -Qj_shell / _Rij_Di_norm
-        + Sij_Dj * -Qi_shell * Qj_shell / _Rij_Dj_norm
-        + Sij_Di_Dj * Qi_shell * Qj_shell / _Rij_Di_Dj_norm
+            Sij       * -Qi_shell * -Qj_shell / Rij_norm
+          + Sij_Di    *  Qi_shell * -Qj_shell / Rij_Di_norm
+          + Sij_Dj    * -Qi_shell *  Qj_shell / Rij_Dj_norm
+          + Sij_Di_Dj *  Qi_shell *  Qj_shell / Rij_Di_Dj_norm
     )
-
     # keep diagonal (intramolecular) components except for self-terms
     I_intra = jnp.eye(U_coul_intra.shape[0])
     I_self = jnp.eye(U_coul_intra.shape[-1])
     U_coul_intra = (U_coul_intra * I_intra[:, :, jnp.newaxis, jnp.newaxis]) * (
         1 - I_self[jnp.newaxis, jnp.newaxis, :, :]
     )
-    U_coul_intra = (
-        0.5 * jnp.where(jnp.isfinite(U_coul_intra), U_coul_intra, 0).sum()
-    )  # might work in jax
 
-    # remove diagonal (intramolecular) components
-    # note, this ignores ALL nonbonded interactions for
-    # bonded atoms (i.e., 1-5, 1-6, etc.)
-    I = jnp.eye(U_coul.shape[0])
-    mask = 1 - I[:, :, jnp.newaxis, jnp.newaxis]
-    U_coul_inter = U_coul * mask
-    U_coul_inter = (
-        0.5 * jnp.where(jnp.isfinite(U_coul_inter), U_coul_inter, 0).sum()
-    )  # might work in jax
+    U_coul_total = 0.5 * safe_sum(U_coul_inter + U_coul_intra)
 
-    return ONE_4PI_EPS0 * (U_coul_inter + U_coul_intra)
+    return ONE_4PI_EPS0 * U_coul_total
 
-
-# @jit
+@jit
 def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=None):
     """
-    calculates total induction energy,
-    U_ind = Uself + Uuu + Ustat.
+    Calculate total induction energy with decomposition,
+    U_total = U_induction + U_static, 
+    where 
+    U_induction = (U_coulomb - U_coulomb_static) + U_self.
 
     Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np is apparently a <class 'jax._src.interpreters.ad.JVPTracer'> whereas Rij is <class 'jaxlib.xla_extension.ArrayImpl'>.
-        array of displacements between core and shell sites
-    <np.array> k
-        array of harmonic spring constants for core/shell pairs
+    <jaxlib.xla_extension.ArrayImp> Rij (nmol, nmol, natoms, natoms, 3)
+       JAX array of core-core atom x,y,z displacements 
+    <jaxlib.xla_extension.ArrayImp> Dij (nmol, natoms, 3)
+       JAX array of core-shell atom x,y,z displacements )
+    <jaxlib.xla_extension.ArrayImp> Qi_shell (nmol, 1, natoms, 1)
+       JAX array of shell charges, row-wise
+    <jaxlib.xla_extension.ArrayImp> Qj_shell (1, nmol, 1, natoms)
+       JAX array of shell charges, column-wise
+    <jaxlib.xla_extension.ArrayImp> Qi_core (nmol, 1, natoms, 1)
+       JAX array of core charges, row-wise
+    <jaxlib.xla_extension.ArrayImp> Qj_core (1, nmol, 1, natoms)
+       JAX array of core charges, column-wise
+    <jaxlib.xla_extension.ArrayImp> u_scale (nmol, nmol, natoms, natoms)
+       JAX array of Thole screening term, a/(alphai*alphaj)^(1/6)
+    <jaxlib.xla_extension.ArrayImp> k (nmol, natoms)
+       JAX array of Drude spring constants, k = q_D^2 / alpha
 
     Returns:
     <np.float> Uind
@@ -154,17 +143,19 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=Non
             Dij, reshape
         )  # specifically to resolve scipy.optimize handling of 1D arrays
 
-    U_self = Uself(Dij, k)
     U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale)
     U_coul_static = Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core)
-    U_ind = U_coul - U_coul_static + U_self
+    U_self = Uself(Dij, k)
+    
+    U_ind = (U_coul - U_coul_static) + U_self
+    
     logger.info(f"U_self = {U_self} kJ/mol\nU_coul = {U_coul} kJ/mol\n")
     logger.info(f"U_coul_static = {U_coul_static} kJ/mol\nU_ind = {U_ind} kJ/mol\n")
 
-    return U_self + U_coul
+    return U_ind
 
 
-# @jit
+@jit
 def drudeOpt(
     Rij,
     Dij0,
@@ -235,50 +226,24 @@ def main():
         default="../benchmarks/OpenMM",
         help="Directory for benchmark input files.",
     )
-    parser.add_argument(
-        "--scf",
-        type=str,
-        default=None,
-        help="SCF method, can be 'openmm' (for reference Dij) or None.",
-    )
 
     args = parser.parse_args()
     dir = args.dir
     mol = args.mol
-    scf = args.scf
 
     logger.info(f"%%%%%%%%%%% STARTING {mol.upper()} U_IND CALCULATION %%%%%%%%%%%%")
     logger.info("-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
 
-    Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = (
-        get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
+    simmd = setup_openmm(
+        pdb_file=os.path.join(dir, mol, mol + ".pdb"),
+        ff_file=os.path.join(dir, mol, mol + ".xml"),
+        residue_file=os.path.join(dir, mol, mol + "_residue.xml"),
     )
-    
-    ################## Testing New Code ###################################
-    simmd2 = setup_openmm(
-                pdb_file=os.path.join(dir, mol, mol+".pdb"),
-                ff_file=os.path.join(dir, mol, mol+".xml"),
-                residue_file=os.path.join(dir, mol, mol+"_residue.xml"), 
-    )
-    
-    #Uind_openmm_2 = U_ind_omm(simmd2)
-    Rij_2, Dij_2 = get_Rij_Dij(simmd2)
-    Qi_core_2, Qi_shell_2, Qj_core_2, Qj_shell_2 = get_QiQj(simmd2)
-    k_2, u_scale_2 = get_pol_params(simmd2)
-    
-    #print(f"U_ind_omm comparison: {Uind_openmm}, {Uind_openmm_2}")
 
-    print(Dij, Dij_2)
-    print(f"R_ij comparison: {jnp.allclose(Rij, Rij_2)}")
-    print(f"D_ij comparison: {jnp.allclose(Dij, Dij_2)}")
-    
-    print(f"Qi_core comparison: {jnp.allclose(Qi_core, Qi_core_2)}")
-    print(f"Qj_core comparison: {jnp.allclose(Qj_core, Qj_core_2)}")
-    print(f"Qi_shell comparison: {jnp.allclose(Qi_shell, Qi_shell_2)}")
-    print(f"Qj_shell comparison: {jnp.allclose(Qj_shell, Qj_shell_2)}")
-
-    print(f"k comparison: {jnp.allclose(k, k_2)}")
-    print(f"u_scale comparison: {jnp.allclose(u_scale, u_scale_2)}")
+    Uind_openmm = U_ind_omm(simmd)
+    Rij, Dij = get_Rij_Dij(simmd)
+    Qi_core, Qi_shell, Qj_core, Qj_shell = get_QiQj(simmd)
+    k, u_scale = get_pol_params(simmd)
 
     Dij = drudeOpt(
         Rij,
@@ -292,6 +257,8 @@ def main():
         reshape=Dij.shape,
     )
     U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
+    print(f"U_ind type: {type(U_ind)}")
+    print(f"U_ind_omm: {Uind_openmm}")
     logger.info(f"OpenMM U_ind = {Uind_openmm:.7f} kJ/mol")
     logger.info(f"Python U_ind = {U_ind:.7f} kJ/mol")
     logger.info(f"{abs((Uind_openmm - U_ind) / U_ind) * 100:.2f}% Error")

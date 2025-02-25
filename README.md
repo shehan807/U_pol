@@ -95,4 +95,3 @@ Of course, these equations are not without limitations relative to quantum mecha
 
 ##### Conjugate Gradient
 ##### BFGS
-
