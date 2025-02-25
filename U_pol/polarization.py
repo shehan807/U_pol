@@ -253,6 +253,33 @@ def main():
     Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, Uind_openmm = (
         get_inputs(scf=scf, dir=dir, mol=mol, logger=logger)
     )
+    
+    ################## Testing New Code ###################################
+    simmd2 = setup_openmm(
+                pdb_file=os.path.join(dir, mol, mol+".pdb"),
+                ff_file=os.path.join(dir, mol, mol+".xml"),
+                residue_file=os.path.join(dir, mol, mol+"_residue.xml"), 
+    )
+    
+    #Uind_openmm_2 = U_ind_omm(simmd2)
+    Rij_2, Dij_2 = get_Rij_Dij(simmd2)
+    Qi_core_2, Qi_shell_2, Qj_core_2, Qj_shell_2 = get_QiQj(simmd2)
+    k_2, u_scale_2 = get_pol_params(simmd2)
+    
+    #print(f"U_ind_omm comparison: {Uind_openmm}, {Uind_openmm_2}")
+
+    print(Dij, Dij_2)
+    print(f"R_ij comparison: {jnp.allclose(Rij, Rij_2)}")
+    print(f"D_ij comparison: {jnp.allclose(Dij, Dij_2)}")
+    
+    print(f"Qi_core comparison: {jnp.allclose(Qi_core, Qi_core_2)}")
+    print(f"Qj_core comparison: {jnp.allclose(Qj_core, Qj_core_2)}")
+    print(f"Qi_shell comparison: {jnp.allclose(Qi_shell, Qi_shell_2)}")
+    print(f"Qj_shell comparison: {jnp.allclose(Qj_shell, Qj_shell_2)}")
+
+    print(f"k comparison: {jnp.allclose(k, k_2)}")
+    print(f"u_scale comparison: {jnp.allclose(u_scale, u_scale_2)}")
+
     Dij = drudeOpt(
         Rij,
         jnp.ravel(Dij),
