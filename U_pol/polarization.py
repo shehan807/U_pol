@@ -148,9 +148,6 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k):
     
     U_ind = (U_coul - U_coul_static) + U_self
     
-    logger.info(f"U_self = {U_self} kJ/mol\nU_coul = {U_coul} kJ/mol\n")
-    logger.info(f"U_coul_static = {U_coul_static} kJ/mol\nU_ind = {U_ind} kJ/mol\n")
-
     return U_ind
 
 
@@ -172,7 +169,6 @@ def drudeOpt(
     Uind w.r.t d.
 
     """
-
     Uind_min = lambda Dij: Uind(
         Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k
     )
@@ -182,7 +178,7 @@ def drudeOpt(
         solver = BFGS(fun=Uind_min, tol=0.0001, verbose=False)
         res = solver.run(init_params=Dij0)
         end = time.time()
-        logger.info(f"JAXOPT.BFGS Minimizer completed in {end-start:.3f} seconds!!")
+        logger.info(f"JAXOPT.BFGS Time: {end-start:.3f} seconds.")
         d_opt = res.params 
         try:
             if d_ref.any():
@@ -196,7 +192,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    jax.config.update("jax_debug_nans", True)
+    #jax.config.update("jax_debug_nans", True)
     jax.config.update("jax_enable_x64", True)
 
     global logger
@@ -238,7 +234,11 @@ def main():
         residue_file=os.path.join(dir, mol, mol + "_residue.xml"),
     )
 
+    start = time.time()
     Uind_openmm = U_ind_omm(simmd)
+    end = time.time()
+    logger.info(f"OpenMM SCF Time: {end-start:.3f} seconds.")
+    
     Rij, Dij = get_Rij_Dij(simmd)
     Qi_core, Qi_shell, Qj_core, Qj_shell = get_QiQj(simmd)
     k, u_scale = get_pol_params(simmd)

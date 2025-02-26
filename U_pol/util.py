@@ -2,6 +2,7 @@
 import os
 import jax.numpy as jnp
 from optax import safe_norm
+import time
 import numpy as np
 from openmm.app import (
     Simulation,
