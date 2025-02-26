@@ -1,0 +1,26 @@
+#PBS -N dma
+#PBS -A GT-jmcdaniel43-chemx
+#PBS -q inferno
+#PBS -o dma.$PBS_JOBID
+#PBS -e dma.$PBS_JOBID
+#PBS -l nodes=1:ppn=8
+#PBS -l walltime=2:00:00
+
+cd $PBS_O_WORKDIR
+
+module load anaconda3
+source activate psi4_v1.6
+
+export myscratch=~/scratch/psi4.$PBS_JOBID
+export PSI_SCRATCH=$myscratch
+mkdir -p $PSI_SCRATCH
+
+export PSIDATADIR=""
+export PSIDATADIR=~/.conda/envs/psi4_v1.6/share/psi4/
+
+# first, psi4 calculation
+psi4 -n 8 acetonitrile.inp acetonitrile.out >& acetonitrile.stdout
+rm -r $PSI_SCRATCH
+
+# now fit charges
+bash fit_charges.sh

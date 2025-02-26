@@ -1,0 +1,19 @@
+
+molecule acnit {
+  C    0.000000    0.000000    0.000000
+  C    0.056130    0.023070    1.447480
+  N    0.101910    0.043860    2.594820
+  H    0.235630   -0.997960   -0.368840
+  H    0.720430    0.707160   -0.412730
+  H   -0.998390    0.275760   -0.339710
+}
+
+set {
+basis def2-SVP
+}
+
+grad, wfn = energy('pbe0', return_wfn=True)
+
+fw = core.FCHKWriter(wfn)
+fchkfile = 'molecule' + '.fchk'
+fw.write(fchkfile)

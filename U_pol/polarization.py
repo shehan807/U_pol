@@ -1,323 +1,269 @@
 #!/usr/bin/env python
 
-# Import standard Python modules 
-import os, sys
-sys.path.append('.')
-from util import *
-from openmm.app import *
-from openmm import *
-from simtk.unit import *
-import numpy as np
-from scipy.optimize import minimize
-import logging
+# Import standard Python modules
 import time
+from datetime import datetime
+import sys
+
+sys.path.append(".")
+from util import *
+import logging
+import jax.numpy as jnp
+import jax
+from jax import jit
+from jaxopt import BFGS
+from optax import safe_norm
+import argparse
+
 
 def set_constants():
-    global ONE_4PI_EPS0 
+    global ONE_4PI_EPS0
     M_PI = 3.14159265358979323846
     E_CHARGE = 1.602176634e-19
     AVOGADRO = 6.02214076e23
-    EPSILON0 = (1e-6*8.8541878128e-12/(E_CHARGE*E_CHARGE*AVOGADRO))
-    ONE_4PI_EPS0 = (1/(4*M_PI*EPSILON0))
+    EPSILON0 = 1e-6 * 8.8541878128e-12 / (E_CHARGE * E_CHARGE * AVOGADRO)
+    ONE_4PI_EPS0 = 1 / (4 * M_PI * EPSILON0)
 
+@jit
+def make_Sij(Rij, u_scale):
+    """Build Thole screening function for intra-molecular dipole-dipole interactions."""
+    Rij_norm = safe_norm(Rij, 0.0, axis=-1)
+    return 1.0 - (1.0 + 0.5 * Rij_norm * u_scale) * jnp.exp(-u_scale * Rij_norm)
 
-def get_inputs(openmm=True, psi4=False, scf='openmm',**kwargs):
-    """
-    Function to generate inputs based on OpenMM realization (i.e., 
-    pdb, ff.xml, and residue.xml as inputs) or Psi4 implementation
-    (i.e., mol.cif). 
+@jit
+def jnp_denominator_norm(X):
+    """Enable nan-friendly gradients & divide by zero"""
+    X_norm = safe_norm(X, 0.0, axis=-1)
+    return jnp.where(X_norm == 0.0, jnp.inf, X_norm)
+
+@jit
+def safe_sum(X):
+    """Enable safe sum for jnp matrices with infty."""
+    return jnp.where(jnp.isfinite(X), X, 0).sum()
+
+@jit
+def Uself(Dij, k):
+    """Calculates self energy, 1/2 Σ k_i * ||d_mag_i||^2."""
+    d_mag = safe_norm(Dij, 0.0, axis=2)
+    return 0.5 * jnp.sum(k * d_mag**2)
+
+@jit
+def Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core):
+    """Compute static Coulomb energy, i.e., Q = Q_core + Q_Drude.""" 
+    Rij_norm = jnp_denominator_norm(Rij)           
+    U_coul_static = (Qi_core + Qi_shell) * (Qj_core + Qj_shell) / Rij_norm
+
+    # remove intramolecular contributions
+    I = jnp.eye(U_coul_static.shape[0])
+    U_coul_static = U_coul_static * (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+    U_coul_static = 0.5 * safe_sum(U_coul_static)
+
+    return ONE_4PI_EPS0 * U_coul_static
+
+@jit
+def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
+    """Compute total inter- and intra-molecular Coulomb energy.""" 
     
-    Arguments:
-    <bool> openmm
-        boolean for openmm inputs
-        **kwargs: keyword arguments 
-            <str> pdb 
-                pdb path 
-            <str> ff_xml 
-                ff.xml path 
-            <str> res_xml
-                residue.xml path 
-    <bool> psi4
-        boolean for psi4 inputs
-        **kwargs: keyword arguments 
-            <str> cif 
-                mol.cif path 
-    <str> scf
-        method for optimizing drude positions
-        - "openmm" (used to check for accuracy)
-        - "custom"
+    # build denominator rij terms i
+    Di = Dij[:, jnp.newaxis, :, jnp.newaxis, :]
+    Dj = Dij[jnp.newaxis, :, jnp.newaxis, :, :]
+    Rij_norm       = jnp_denominator_norm(Rij)           
+    Rij_Di_norm    = jnp_denominator_norm(Rij + Di)      
+    Rij_Dj_norm    = jnp_denominator_norm(Rij - Dj)      
+    Rij_Di_Dj_norm = jnp_denominator_norm(Rij + Di - Dj) 
+
+    # build Thole screening matrices
+    Sij       = make_Sij(Rij, u_scale)       
+    Sij_Di    = make_Sij(Rij + Di, u_scale)    
+    Sij_Dj    = make_Sij(Rij - Dj, u_scale)    
+    Sij_Di_Dj = make_Sij(Rij + Di - Dj, u_scale) 
+
+    # compute intermolecular Coulomb matrix
+    U_coul_inter = (
+            Qi_core  * Qj_core  / Rij_norm
+          + Qi_shell * Qj_core  / Rij_Di_norm
+          + Qi_core  * Qj_shell / Rij_Dj_norm
+          + Qi_shell * Qj_shell / Rij_Di_Dj_norm
+    )
+    # remove diagonal (intramolecular) components
+    # NOTE: ignores ALL nonbonded interactions for bonded atoms (i.e., 1-5, 1-6, etc.)
+    I = jnp.eye(U_coul_inter.shape[0])
+    U_coul_inter = U_coul_inter * (1 - I[:, :, jnp.newaxis, jnp.newaxis])
+
+    # compute intramolecular Coulomb matrix (of screened dipole-dipole pairs)
+    U_coul_intra = (
+            Sij       * -Qi_shell * -Qj_shell / Rij_norm
+          + Sij_Di    *  Qi_shell * -Qj_shell / Rij_Di_norm
+          + Sij_Dj    * -Qi_shell *  Qj_shell / Rij_Dj_norm
+          + Sij_Di_Dj *  Qi_shell *  Qj_shell / Rij_Di_Dj_norm
+    )
+    # keep diagonal (intramolecular) components except for self-terms
+    I_intra = jnp.eye(U_coul_intra.shape[0])
+    I_self = jnp.eye(U_coul_intra.shape[-1])
+    U_coul_intra = (U_coul_intra * I_intra[:, :, jnp.newaxis, jnp.newaxis]) * (
+        1 - I_self[jnp.newaxis, jnp.newaxis, :, :]
+    )
+
+    U_coul_total = 0.5 * safe_sum(U_coul_inter + U_coul_intra)
+
+    return ONE_4PI_EPS0 * U_coul_total
+
+@jit
+def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k):
     """
-    if openmm:
-        # Handle input errors 
-        inputs = ['pdb','ff_xml','res_xml']
-        for input in inputs: 
-            if input not in kwargs:
-                raise ValueError(f"Missing '{input}' file for OpenMM implementation.")
-        
-        # use openMM to obtain bond definitions and atom/Drude positions
-        Topology().loadBondDefinitions(kwargs['res_xml'])
-        integrator = DrudeSCFIntegrator(0.00001*picoseconds)
-        integrator.setRandomNumberSeed(123) 
-        pdb = PDBFile(kwargs['pdb'])
-        modeller = Modeller(pdb.topology, pdb.positions)
-        forcefield = ForceField(kwargs['ff_xml'])
-        modeller.addExtraParticles(forcefield)
-        system = forcefield.createSystem(modeller.topology, constraints=None, rigidWater=True)
-        for i in range(system.getNumForces()):
-            f = system.getForce(i)
-            f.setForceGroup(i)
-        platform = Platform.getPlatformByName('CUDA')
-        simmd = Simulation(modeller.topology, system, integrator, platform)
-        simmd.context.setPositions(modeller.positions)
-        
-        drude = [f for f in system.getForces() if isinstance(f, DrudeForce)][0]
-        nonbonded = [f for f in system.getForces() if isinstance(f, NonbondedForce)][0]
-        
-        positions = simmd.context.getState(getPositions=True).getPositions()
-        
-        # optimize drude positions using OpenMM
-        simmd.step(1)
-        state = simmd.context.getState(getEnergy=True,getForces=True,getVelocities=True,getPositions=True)
-        Uind_openmm = state.getPotentialEnergy() 
-        logger.info("=-=-=-=-=-=-=-=-=-=-=-=-OpenMM Output-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        logger.info("total Energy" + str(Uind_openmm))
-        for j in range(system.getNumForces()):
-           f = system.getForce(j)
-           PE = str(type(f)) + str(simmd.context.getState(getEnergy=True, groups=2**j).getPotentialEnergy())
-           logger.info(PE)
-            
-        if scf == "openmm": # if using openmm for drude opt, update positions
-            positions = simmd.context.getState(getPositions=True).getPositions()
-        
-        numDrudes = drude.getNumParticles()
-        drude_indices  = [drude.getParticleParameters(i)[0] for i in range(numDrudes)]
-        parent_indices = [drude.getParticleParameters(i)[1] for i in range(numDrudes)]
-        
-        # Initialize r_core, r_shell, q_core (q_shell is not needed)
-        topology = modeller.getTopology()
-        r_core = []; r_shell = []; q_core = []; q_shell=[]; alphas = []
-        for i, res in enumerate(topology.residues()):
-            res_core_pos = []; res_shell_pos = []; res_charge = []; res_shell_charge = []; res_alpha = []
-            for atom in res.atoms():
-                if atom.index in drude_indices:
-                    continue # these are explored in parents
-                charge, sigma, epsilon = nonbonded.getParticleParameters(atom.index)
-                charge = charge.value_in_unit(elementary_charge)
-                if atom.index in parent_indices:
-                    drude_index = drude_indices[parent_indices.index(atom.index)] # map parent to drude index
-                    drude_pos = list(positions[drude_index])
-                    drude_pos = [p.value_in_unit(nanometer) for p in drude_pos]
-                    drude_params = drude.getParticleParameters(parent_indices.index(atom.index))
-                    drude_charge = drude_params[5].value_in_unit(elementary_charge)
-                    alpha = drude_params[6]
-                    res_shell_charge.append(drude_charge)
-                else:
-                    res_shell_charge.append(0.0)
-                    drude_pos = [0.0,0.0,0.0]
-                    alpha = 0.0 * nanometer**3
-                
-                pos = list(positions[atom.index])
-                pos = [p.value_in_unit(nanometer) for p in pos]
-                alpha = alpha.value_in_unit(nanometer**3)
-                
-                # update positions for residue
-                res_core_pos.append(pos)
-                res_shell_pos.append(drude_pos)
-                res_charge.append(charge)
-                res_alpha.append(alpha)
-            
-            r_core.append(res_core_pos)
-            r_shell.append(res_shell_pos)
-            q_core.append(res_charge)
-            q_shell.append(res_shell_charge)
-            alphas.append(res_alpha)
-    elif psi4:
-        pass 
-        # TODO: Given initial positions of a crystal structure or trajectory file, 
-        # initialize shell charge site positions and charges
-        # add initial drude particles positions randomly 
-        # set_drudes(...)
-        # position = Vec3(random.gauss(0, 1), random.gauss(0, 1), random.gauss(0, 1))+(unit.sum(knownPositions)/len(knownPositions))
-        
-    r_core = np.array(r_core)
-    r_shell = np.array(r_shell)
-    q_core = np.array(q_core)
-    q_shell = np.array(q_shell)
-    alphas = np.array(alphas)
-    k = np.divide(ONE_4PI_EPS0*(q_shell)**2, alphas, where=alphas != 0, out=np.zeros_like(alphas))
-    return r_core, q_core, r_shell, q_shell, k, Uind_openmm.value_in_unit(kilojoules_per_mole)
-
-
-def set_drudes(r_core, weights=None):
-    """ 
-    TODO: Given initial positions of a crystal structure or trajectory file, 
-    initialize shell charge site positions and charges
+    Calculate total induction energy with decomposition,
+    U_total = U_induction + U_static, 
+    where 
+    U_induction = (U_coulomb - U_coulomb_static) + U_self.
 
     Arguments:
-    <np.array> r_core
-        array of core charge site positions
-
-    Returns:
-    <np.array> r_shell
-        array of all shell site positions
-    """
-    return 
-
-def get_displacements(r_core, r_shell):
-    """
-    Given initial positions of a crystal structure or trajectory file, 
-    initialize shell charge site positions and charges
-
-    Arguments:
-    <np.array> r_core
-        array of core charge site positions
-    <np.array> r_shell
-        array of shell charge site positions
-
-    Returns:
-    <np.array> d
-        array of displacements for every core/shell pair
-    """
-    shell_mask = np.linalg.norm(r_shell, axis=-1) > 0.0
-    d = r_core - r_shell
-    d = np.where(shell_mask[...,np.newaxis], d, 0.0)
-    return d
-
-def Upol(d, k):
-    """
-    Calculates polarization energy, 
-    U_pol = 1/2 Σ k_i * ||d_i||^2.
-
-    Arguments:
-    <np.array> d
-        array of displacements between core and shell sites
-    <np.array> k
-        array of harmonic spring constants for core/shell pairs
-
-    Returns:
-    <np.float> Upol
-        polarization energy
-    """
-    d_mag = np.linalg.norm(d, axis=2)
-    return 0.5 * np.sum(k * d_mag**2)
-
-def Ucoul(r_core, q_core, r_shell, q_shell, Dij):
-    """
-    calculates total coulomb interaction energy, 
-    U_coul = ...
-
-    Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np.array> d
-        array of displacements between core and shell sites
-
-    Returns:
-    <np.float> U_coul
-        Coulombic interaction energy
-    """
-    
-    # broadcast r_core (nmols, natoms, 3) --> Rij (nmols, nmols, natoms, natoms, 3)
-    Rij = r_core[np.newaxis,:,np.newaxis,:,:] - r_core[:,np.newaxis,:,np.newaxis,:]
-    
-    # broadcast q_core (nmols_i, natoms_j) --> Qij (nmols_i, nmols_j, natoms_i, natoms_j)
-    Qij  = q_core[np.newaxis,:,np.newaxis,:] * q_core[:,np.newaxis,:,np.newaxis]
-    
-    # create Di and Dj matrices (account for nonzero values that are not true displacements)
-    Di = Dij[:,np.newaxis,:,np.newaxis,:]
-    Dj = Dij[np.newaxis,:,np.newaxis,:,:]
-
-    # break up core-shell, shell-core, and shell-shell terms
-    Qi_shell = q_shell[:,np.newaxis,:,np.newaxis]
-    Qj_shell = q_shell[np.newaxis,:,np.newaxis,:]
-    Qi_core  = q_core[:,np.newaxis,:,np.newaxis]
-    Qj_core  = q_core[np.newaxis,:,np.newaxis,:]
-    
-    U_coul =       Qi_core  * Qj_core  / np.linalg.norm(Rij,axis=-1)\
-                 + Qi_shell * Qj_core  / np.linalg.norm(Rij + Di,axis=-1)\
-                 + Qi_core  * Qj_shell / np.linalg.norm(Rij - Dj,axis=-1)\
-                 + Qi_shell * Qj_shell / np.linalg.norm(Rij + Di - Dj,axis=-1)       
-
-    # remove diagonal (intramolecular) components 
-    I = np.eye(U_coul.shape[0])
-    U_coul = U_coul * (1 - I[:,:,np.newaxis,np.newaxis])
-    
-    U_coul = 0.5 * np.ma.masked_invalid(U_coul).sum()
-    
-    return ONE_4PI_EPS0*U_coul
-
-def Uind(r_core, q_core, r_shell, q_shell, d, k):
-    """
-    calculates total induction energy, 
-    U_ind = Upol + Uuu + Ustat.
-
-    Arguments:
-    <np.array> r
-        array of positions for all core and shell sites
-    <np.array> q
-        array of charges for all core and shell sites
-    <np.array> d
-        array of displacements between core and shell sites
-    <np.array> k
-        array of harmonic spring constants for core/shell pairs
+    <jaxlib.xla_extension.ArrayImp> Rij (nmol, nmol, natoms, natoms, 3)
+       JAX array of core-core atom x,y,z displacements 
+    <jaxlib.xla_extension.ArrayImp> Dij (nmol, natoms, 3) or (nmol*natoms*3, )
+       JAX array of core-shell atom x,y,z displacements )
+    <jaxlib.xla_extension.ArrayImp> Qi_shell (nmol, 1, natoms, 1)
+       JAX array of shell charges, row-wise
+    <jaxlib.xla_extension.ArrayImp> Qj_shell (1, nmol, 1, natoms)
+       JAX array of shell charges, column-wise
+    <jaxlib.xla_extension.ArrayImp> Qi_core (nmol, 1, natoms, 1)
+       JAX array of core charges, row-wise
+    <jaxlib.xla_extension.ArrayImp> Qj_core (1, nmol, 1, natoms)
+       JAX array of core charges, column-wise
+    <jaxlib.xla_extension.ArrayImp> u_scale (nmol, nmol, natoms, natoms)
+       JAX array of Thole screening term, a/(alphai*alphaj)^(1/6)
+    <jaxlib.xla_extension.ArrayImp> k (nmol, natoms)
+       JAX array of Drude spring constants, k = q_D^2 / alpha
 
     Returns:
     <np.float> Uind
         induction energy
     """
-    U_pol  = Upol(d, k)
-    U_coul = Ucoul(r_core, q_core, r_shell, q_shell, d)
-    return U_pol + U_coul
+    (nmol, _, natoms, _, pos) = Rij.shape
+    if Dij.shape != (nmol, natoms, pos):
+        Dij = jnp.reshape(Dij, (nmol, natoms, pos))
 
-def opt_d(d0):
+    U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale)
+    U_coul_static = Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core)
+    U_self = Uself(Dij, k)
+    
+    U_ind = (U_coul - U_coul_static) + U_self
+    
+    return U_ind
+
+
+@jit
+def drudeOpt(
+    Rij,
+    Dij0,
+    Qi_shell,
+    Qj_shell,
+    Qi_core,
+    Qj_core,
+    u_scale,
+    k,
+    methods=["BFGS"],
+    d_ref=None,
+):
     """
-    TODO: Iteratively determine core/shell displacements, d, by minimizing 
-    Uind w.r.t d. 
+    Iteratively determine core/shell displacements, d, by minimizing
+    Uind w.r.t d.
 
     """
-    return get_displacements(r_core_opt, r_shell_opt)
+    Uind_min = lambda Dij: Uind(
+        Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k
+    )
+
+    for method in methods:
+        start = time.time()
+        solver = BFGS(fun=Uind_min, tol=0.0001, verbose=False)
+        res = solver.run(init_params=Dij0)
+        end = time.time()
+        logger.info(f"JAXOPT.BFGS Time: {end-start:.3f} seconds.")
+        d_opt = res.params 
+        try:
+            if d_ref.any():
+                diff = jnp.linalg.norm(d_ref - d_opt)
+        except AttributeError:
+            pass
+    return d_opt
+
 
 logger = logging.getLogger(__name__)
-def main(): 
-   
-    global logger 
-    logging.basicConfig(filename='log.out',level=logging.WARN, format='%(message)s')
+
+
+def main():
+    #jax.config.update("jax_debug_nans", True)
+    jax.config.update("jax_enable_x64", True)
+
+    global logger
+    logging.basicConfig(filename="log.out", level=logging.INFO, format="%(message)s")
+    logging.info(f"Log started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
     # logger.setLevel(logging.DEBUG)
     # logging.getLogger().setLevel(logging.DEBUG)
 
     set_constants()
 
-    testWater = True
-    testAcnit = True
+    parser = argparse.ArgumentParser(
+        description="Calculate U_ind = U_self + U_es for a selected molecule."
+    )
+    parser.add_argument(
+        "--mol",
+        type=str,
+        required=True,
+        choices=["water", "acnit", "imidazole", "imidazole2", "imidazole3", "pyrazine"],
+        help="Molecule type (with OpenMM files).",
+    )
+    parser.add_argument(
+        "--dir",
+        type=str,
+        default="../benchmarks/OpenMM",
+        help="Directory for benchmark input files.",
+    )
 
-    if testWater:
-        logger.info("WATER-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
-                                                    pdb="../benchmarks/OpenMM/water/water.pdb",
-                                                    ff_xml="../benchmarks/OpenMM/water/water.xml",
-                                                    res_xml="../benchmarks/OpenMM/water/water_residue.xml")
-        d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
-        logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
-        logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
-        logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
-        logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n")
+    args = parser.parse_args()
+    dir = args.dir
+    mol = args.mol
+
+    logger.info(f"%%%%%%%%%%% STARTING {mol.upper()} U_IND CALCULATION %%%%%%%%%%%%")
+    logger.info("-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
+
+    simmd = setup_openmm(
+        pdb_file=os.path.join(dir, mol, mol + ".pdb"),
+        ff_file=os.path.join(dir, mol, mol + ".xml"),
+        residue_file=os.path.join(dir, mol, mol + "_residue.xml"),
+    )
+
+    start = time.time()
+    Uind_openmm = U_ind_omm(simmd)
+    end = time.time()
+    logger.info(f"OpenMM SCF Time: {end-start:.3f} seconds.")
     
-    if testAcnit:
-        logger.info("ACETONITRILE=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-        r_core, q_core, r_shell, q_shell, k, U_ind_openmm = get_inputs(OpenMM=True, scf="openmm",
-                                                    pdb="../benchmarks/OpenMM/acetonitrile/acnit.pdb",
-                                                    ff_xml="../benchmarks/OpenMM/acetonitrile/acnit.xml",
-                                                    res_xml="../benchmarks/OpenMM/acetonitrile/acnit_residue.xml")
-        d = get_displacements(r_core, r_shell) # get initial core/shell displacements 
-        U_ind = Uind(r_core, q_core, r_shell, q_shell, d, k)
-        logger.info(f"OpenMM U_ind = {U_ind_openmm:.4f} kJ/mol")
-        logger.info(f"Python U_ind = {U_ind:.4f} kJ/mol")
-        logger.info(f"{abs((U_ind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
-        logger.info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=")
-
+    Rij, Dij = get_Rij_Dij(simmd)
+    Qi_core, Qi_shell, Qj_core, Qj_shell = get_QiQj(simmd)
+    k, u_scale = get_pol_params(simmd)
+    
+    Dij = drudeOpt(
+        Rij,
+        jnp.ravel(Dij),
+        Qi_shell,
+        Qj_shell,
+        Qi_core,
+        Qj_core,
+        u_scale,
+        k,
+    )
+    
+    U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
+    
+    print(f"U_ind type: {type(U_ind)}")
+    print(f"U_ind_omm: {Uind_openmm}")
+    logger.info(f"OpenMM U_ind = {Uind_openmm:.7f} kJ/mol")
+    logger.info(f"Python U_ind = {U_ind:.7f} kJ/mol")
+    logger.info(f"{abs((Uind_openmm - U_ind) / U_ind) * 100:.2f}% Error")
+    logger.info(
+        "=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n"
+    )
 
 
 if __name__ == "__main__":

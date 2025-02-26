@@ -1,0 +1,24 @@
+
+molecule imidazole {
+  0 1
+  N    2.8090   -0.4594    0.0000
+  N    3.3090    1.0794    0.0000
+  C    2.0000    0.1284    0.0000
+  C    3.6180    0.1284    0.0000
+  C    2.3090    1.0794    0.0000
+  H    2.8090   -1.0794    0.0000
+  H    1.4103   -0.0632    0.0000
+  H    4.2077   -0.0632    0.0000
+  H    1.9446    1.5810    0.0000
+}
+
+set {
+basis def2-SVP
+}
+
+# grad, wfn = energy('pbe0', return_wfn=True)
+grad, wfn = optimize('pbe0', return_wfn=True)
+
+fw = core.FCHKWriter(wfn)
+fchkfile = 'molecule' + '.fchk'
+fw.write(fchkfile)
