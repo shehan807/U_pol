@@ -63,8 +63,8 @@ def Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core):
 @jit
 def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
     """Compute total inter- and intra-molecular Coulomb energy.""" 
-
-    # build denominator rij terms 
+    
+    # build denominator rij terms i
     Di = Dij[:, jnp.newaxis, :, jnp.newaxis, :]
     Dj = Dij[jnp.newaxis, :, jnp.newaxis, :, :]
     Rij_norm       = jnp_denominator_norm(Rij)           
@@ -109,7 +109,7 @@ def Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale):
     return ONE_4PI_EPS0 * U_coul_total
 
 @jit
-def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=None):
+def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k):
     """
     Calculate total induction energy with decomposition,
     U_total = U_induction + U_static, 
@@ -119,7 +119,7 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=Non
     Arguments:
     <jaxlib.xla_extension.ArrayImp> Rij (nmol, nmol, natoms, natoms, 3)
        JAX array of core-core atom x,y,z displacements 
-    <jaxlib.xla_extension.ArrayImp> Dij (nmol, natoms, 3)
+    <jaxlib.xla_extension.ArrayImp> Dij (nmol, natoms, 3) or (nmol*natoms*3, )
        JAX array of core-shell atom x,y,z displacements )
     <jaxlib.xla_extension.ArrayImp> Qi_shell (nmol, 1, natoms, 1)
        JAX array of shell charges, row-wise
@@ -138,10 +138,9 @@ def Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape=Non
     <np.float> Uind
         induction energy
     """
-    if reshape:
-        Dij = jnp.reshape(
-            Dij, reshape
-        )  # specifically to resolve scipy.optimize handling of 1D arrays
+    (nmol, _, natoms, _, pos) = Rij.shape
+    if Dij.shape != (nmol, natoms, pos):
+        Dij = jnp.reshape(Dij, (nmol, natoms, pos))
 
     U_coul = Ucoul(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale)
     U_coul_static = Ucoul_static(Rij, Qi_shell, Qj_shell, Qi_core, Qj_core)
@@ -167,7 +166,6 @@ def drudeOpt(
     k,
     methods=["BFGS"],
     d_ref=None,
-    reshape=None,
 ):
     """
     Iteratively determine core/shell displacements, d, by minimizing
@@ -176,7 +174,7 @@ def drudeOpt(
     """
 
     Uind_min = lambda Dij: Uind(
-        Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k, reshape
+        Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k
     )
 
     for method in methods:
@@ -185,7 +183,7 @@ def drudeOpt(
         res = solver.run(init_params=Dij0)
         end = time.time()
         logger.info(f"JAXOPT.BFGS Minimizer completed in {end-start:.3f} seconds!!")
-        d_opt = jnp.reshape(res.params, reshape)
+        d_opt = res.params 
         try:
             if d_ref.any():
                 diff = jnp.linalg.norm(d_ref - d_opt)
@@ -244,7 +242,7 @@ def main():
     Rij, Dij = get_Rij_Dij(simmd)
     Qi_core, Qi_shell, Qj_core, Qj_shell = get_QiQj(simmd)
     k, u_scale = get_pol_params(simmd)
-
+    
     Dij = drudeOpt(
         Rij,
         jnp.ravel(Dij),
@@ -254,9 +252,10 @@ def main():
         Qj_core,
         u_scale,
         k,
-        reshape=Dij.shape,
     )
+    
     U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
+    
     print(f"U_ind type: {type(U_ind)}")
     print(f"U_ind_omm: {Uind_openmm}")
     logger.info(f"OpenMM U_ind = {Uind_openmm:.7f} kJ/mol")
