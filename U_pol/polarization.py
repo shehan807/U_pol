@@ -211,7 +211,7 @@ def main():
         "--mol",
         type=str,
         required=True,
-        choices=["water", "acnit", "imidazole", "imidazole2", "imidazole3", "pyrazine"],
+        choices=["water", "acnit", "imidazole", "imidazole2", "imidazole3", "pyrazine", "pyrazole"],
         help="Molecule type (with OpenMM files).",
     )
     parser.add_argument(
@@ -256,8 +256,9 @@ def main():
     
     U_ind = Uind(Rij, Dij, Qi_shell, Qj_shell, Qi_core, Qj_core, u_scale, k)
     
-    print(f"U_ind type: {type(U_ind)}")
+    print(f"U_ind = {U_ind}")
     print(f"U_ind_omm: {Uind_openmm}")
+    logger.info(f"U_ind = {U_ind:.7f} kJ/mol")
     logger.info(f"OpenMM U_ind = {Uind_openmm:.7f} kJ/mol")
     logger.info(f"Python U_ind = {U_ind:.7f} kJ/mol")
     logger.info(f"{abs((Uind_openmm - U_ind) / U_ind) * 100:.2f}% Error")

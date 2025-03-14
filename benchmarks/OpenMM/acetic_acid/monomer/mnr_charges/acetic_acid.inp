@@ -1,0 +1,23 @@
+
+molecule acetic_acid {
+  units angstrom
+  0 1
+  C   -0.408     0.425    -0.511
+  C    0.867    -0.255    -0.040
+  O   -0.419     1.514    -1.071
+  O   -1.529    -0.302    -0.248
+  H    0.859    -0.398     1.040
+  H    1.010    -1.212    -0.540
+  H    1.720     0.379    -0.285
+  H   -1.371    -1.122     0.188
+}
+
+set {
+basis def2-SVP
+}
+
+grad, wfn = optimize('pbe0', return_wfn=True)
+
+fw = core.FCHKWriter(wfn)
+fchkfile = 'molecule' + '.fchk'
+fw.write(fchkfile)

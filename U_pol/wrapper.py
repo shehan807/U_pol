@@ -206,7 +206,7 @@ def parse_python_log(log_path):
     with open(log_path, "r") as f:
         end_file = False
         for line in f:
-            if "JAXOPT.BFGS Minimizer completed" in line:
+            if "JAXOPT.BFGS Time" in line:
                 end_file = True
                 continue
             if end_file:
@@ -326,7 +326,9 @@ def main():
             dimer_ids.append(int(dimer_id))
         else:
             print("  Could not parse python induction from log.out.")
-
+        
+        if len(sapt_energies) == 5:
+            break
     # Now plot, color-coded by dimer_ids
     if len(sapt_energies) > 0:
         sapt_energies = np.array(sapt_energies)

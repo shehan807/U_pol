@@ -23,7 +23,7 @@ source activate p4env
 # export PSIDATADIR=~/.conda/envs/psi4_v1.6/share/psi4/
 
 # first, psi4 calculation
-psi4 -n 8 imidazole.inp imidazole.out >& imidazole.stdout
+psi4 -n 8 pyrazine.inp pyrazine.out >& pyrazine.stdout
 # rm -r $PSI_SCRATCH
 
 # now fit charges
